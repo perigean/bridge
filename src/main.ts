@@ -9,6 +9,13 @@ if (ctx === null) {
     throw "not supported";
 }
 
+function resize() {
+    c.width = c.offsetWidth;
+    c.height = c.offsetHeight;
+}
+document.addEventListener("resize", resize);
+resize();
+
 ctx.strokeStyle = "black";
 ctx.lineWidth = 2;
 
@@ -16,9 +23,12 @@ ctx.lineWidth = 2;
 import { Point2D } from "./transform"
 
 // previous positions of touches
-const touches = new Map<number, Array<Point2D>>();
+let touches = new Map<number, Array<Point2D>>();
 
+let drawToken: number | null = null;
 function redraw(_: number) {
+    drawToken = null;
+
     if (ctx === null) {
         throw new Error("I don't understand typescript");
     }
@@ -39,7 +49,6 @@ function redraw(_: number) {
     }
 }
 
-let drawToken: number | null = null;
 function requestRedraw() {
     if (drawToken === null) {
         drawToken = requestAnimationFrame(redraw);
@@ -56,9 +65,15 @@ function touchStart(evt: TouchEvent) {
 
 function touchEnd(evt: TouchEvent) {
     evt.preventDefault();
+    const newTouches = new Map<number, Array<Point2D>>();
     for (const t of evt.touches) {
-        touches.delete(t.identifier);
+        const ts = touches.get(t.identifier);
+        if (ts === undefined) {
+            throw new Error("Touch moved but not tracked");
+        }
+        newTouches.set(t.identifier, ts);
     }
+    touches = newTouches;
     requestRedraw();
 }
 
@@ -79,3 +94,4 @@ c.addEventListener("touchstart", touchStart, false);
 c.addEventListener("touchend", touchEnd, false);
 c.addEventListener("touchcancel", touchEnd, false);
 c.addEventListener("touchmove", touchMove, false);
+console.log("stuff loaded");
