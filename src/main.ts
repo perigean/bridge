@@ -1,25 +1,22 @@
+import {Viewport, } from "./viewport"
+
 
 const c = (document.getElementById("canvas") as HTMLCanvasElement);
 if (c === null) {
-    throw "where did the canvas go?";
+    throw new Error("No canvas element");
 }
-
 const ctx = c.getContext("2d");
 if (ctx === null) {
-    throw "not supported";
+    throw new Error("No 2d context");
 }
+const vp = new Viewport(ctx, () => {
+    ctx.fillStyle = "black";
+    ctx.fillRect(-64, -64, 128, 128);
+});
 
-function resize() {
-    c.width = c.offsetWidth;
-    c.height = c.offsetHeight;
-}
-document.addEventListener("resize", resize);
-resize();
+document.addEventListener("resize", vp.resize);
 
-ctx.strokeStyle = "black";
-ctx.lineWidth = 2;
-
-
+/*
 import { Point2D } from "./transform"
 
 // previous positions of touches
@@ -94,4 +91,5 @@ c.addEventListener("touchstart", touchStart, false);
 c.addEventListener("touchend", touchEnd, false);
 c.addEventListener("touchcancel", touchEnd, false);
 c.addEventListener("touchmove", touchMove, false);
+*/
 console.log("stuff loaded");
