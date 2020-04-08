@@ -39,16 +39,18 @@ export class Viewport {
         this.render = render;
         this.resize = () => {
             const canvas = this.ctx.canvas;
-            canvas.width = canvas.offsetWidth;
-            canvas.height = canvas.offsetHeight;
+            const dpr = window.devicePixelRatio;
+            canvas.width = canvas.offsetWidth * dpr;
+            canvas.height = canvas.offsetHeight * dpr;
             this.setPosition(this.pos);
         }
         const canvas = this.ctx.canvas;
-        canvas.width = canvas.offsetWidth;
-        canvas.height = canvas.offsetHeight;
+        const dpr = window.devicePixelRatio;
+        canvas.width = canvas.offsetWidth * dpr;
+        canvas.height = canvas.offsetHeight * dpr;
 
         // Will be reset in setLocation below.
-        this.pos = {pos: [0.0, 0.0], scale: 1.0, rotate: 0.0};
+        this.pos = {pos: [0.0, 0.0], scale: dpr, rotate: 0.0};
         this.t = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         this.bounds = [
             [0.0, 0.0],

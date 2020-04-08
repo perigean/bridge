@@ -51,9 +51,17 @@ function touchEndGenerator(name: string) {
         }
     };
 }
+
+function touchMove(evt: TouchEvent) {
+    evt.preventDefault();
+    console.log("touchmove");
+    for (const t of evt.touches) {
+        console.log("    " + t.identifier + ": " + t.clientX + ", " + t.clientY);
+    }
+}
     
 c.addEventListener("touchstart", touchStart, false);
 c.addEventListener("touchend", touchEndGenerator("touchend"), false);
 c.addEventListener("touchcancel", touchEndGenerator("touchcancel"), false);
-//.addEventListener("touchmove", touchMove, false);
+c.addEventListener("touchmove", touchMove, false);
 console.log("stuff loaded");
