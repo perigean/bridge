@@ -38,7 +38,7 @@ function touchStart(evt: TouchEvent) {
     evt.preventDefault();
     console.log("touchstart");
     for (const t of evt.touches) {
-        console.log("    " + t.clientX + ", " + t.clientY);
+        console.log("    " + t.identifier + ": " + t.clientX + ", " + t.clientY);
     }
 }
 
@@ -47,7 +47,7 @@ function touchEndGenerator(name: string) {
         evt.preventDefault();
         console.log(name);
         for (const t of evt.touches) {
-            console.log("    " + t.clientX + ", " + t.clientY);
+            console.log("    " + t.identifier + ": " + t.clientX + ", " + t.clientY);
         }
     };
 }
