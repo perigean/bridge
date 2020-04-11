@@ -2,11 +2,11 @@
 //
 // Copyright Charles Dick 2020
 
+import {Point2D} from "point.js"
+
 // TODO: unit tests, it will suck if there is a typo in here, so find it first!
 
 export type Affine2D = [number, number, number, number, number, number];
-
-export type Point2D = [number, number];
 
 function transformIdentityCreate(): Affine2D {
   return [

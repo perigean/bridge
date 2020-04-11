@@ -1,7 +1,8 @@
 // viewport.js
 //
 // Copyright Charles Dick 2020
-import {Affine2D, Point2D, transformTranslateCreate, transformRotate, transformStretch, transformInvert, transformPoint, transformTranslate} from './transform.js';
+import { Point2D } from "./point.js"
+import { Affine2D, transformTranslateCreate, transformRotate, transformStretch, transformInvert, transformPoint, transformTranslate } from './transform.js';
 
 export const TOP_LEFT = 0;
 export const TOP_RIGHT = 1;
@@ -50,7 +51,7 @@ export class Viewport {
         canvas.height = canvas.offsetHeight * dpr;
 
         // Will be reset in setLocation below.
-        this.pos = {pos: [0.0, 0.0], scale: dpr, rotate: 0.0};
+        this.pos = { pos: [0.0, 0.0], scale: dpr, rotate: 0.0 };
         this.t = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         this.bounds = [
             [0.0, 0.0],
