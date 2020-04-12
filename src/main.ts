@@ -1,5 +1,6 @@
 import { Viewport, ViewportPosition } from "./viewport.js"
-import { Point2D, pointDistance, pointEquals } from "./point.js"
+import { Point2D, pointDistance, pointEquals, pointSub, pointAdd } from "./point.js"
+import { transformPoint } from "./transform.js";
 
 const c = (document.getElementById("canvas") as HTMLCanvasElement);
 if (c === null) {
@@ -118,14 +119,16 @@ export class Gestures implements TouchHandler {
     private taps: Map<number, ActiveTap>;
     private pan: ActivePan;
 
-    private endTap(tap: ActiveTap, id: number) {
+    private endTap(tap: ActiveTap, id: number, panning: boolean) {
         this.taps.delete(id);
         tap.active.delete(id);
-        tap.positions.delete(id);
+        if (panning) {
+            tap.positions.delete(id);
+        }
         if (this.addTap === tap) {
             this.addTap = null;
         }
-        if (tap.active.size === 0) {
+        if (tap.active.size === 0 && tap.positions.size > 0) {
             const positions = [];
             for (const p of tap.positions.values()) {
                 positions.push(p.start);
@@ -173,7 +176,7 @@ export class Gestures implements TouchHandler {
                 pos.curr = [t.clientX, t.clientY];
                 if (16 <= pointDistance(pos.curr, pos.start)) {
                     // Tap has moved enough to be a pan instead.
-                    this.endTap(tap, t.identifier);
+                    this.endTap(tap, t.identifier, true);
                     this.pan.set(t.identifier, {
                         curr: pos.curr,
                         prev: pos.start,
@@ -195,6 +198,7 @@ export class Gestures implements TouchHandler {
         }
         if (panMoved) {
             const positions = [];
+            // NB: pan is in insertion order, so positions will be sent from oldest touch to newest.
             for (const p of this.pan.values()) {
                 positions.push(p);
             }
@@ -205,7 +209,7 @@ export class Gestures implements TouchHandler {
     end(id: number) {
         const tap = this.taps.get(id);
         if (tap !== undefined) {
-            this.endTap(tap, id);
+            this.endTap(tap, id, false);
         } else if (!this.pan.delete(id)) {
             throw new Error("Touch end that was not a tap or a pan");
         }
@@ -222,6 +226,13 @@ new TouchDemux(c, new Gestures({
     },
     pan: (p: Pan) => {
         console.log("pan: ", p);
+        const pos = vp.position();
+        const t = vp.screen2world();
+        const curr = transformPoint(t, p[0].curr);
+        const prev = transformPoint(t, p[0].prev);
+        vp.setPosition({
+            pos: pointAdd(pos.pos, pointSub(prev, curr)),
+        });
     },
 }));
 

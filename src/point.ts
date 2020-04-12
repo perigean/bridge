@@ -10,3 +10,17 @@ export function pointDistance(p1: Point2D, p2: Point2D): number {
 export function pointEquals(p1: Point2D, p2: Point2D): boolean {
     return p1[0] === p2[0] && p1[1] === p2[1];
 }
+
+export function pointSub(p1: Point2D, p2: Point2D): Point2D {
+    return [
+        p1[0] - p2[0],
+        p1[1] - p2[1],
+    ];
+}
+
+export function pointAdd(p1: Point2D, p2: Point2D): Point2D {
+    return [
+        p1[0] + p2[0],
+        p1[1] + p2[1],
+    ];
+}

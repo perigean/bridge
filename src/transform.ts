@@ -5,6 +5,7 @@
 import {Point2D} from "point.js"
 
 // TODO: unit tests, it will suck if there is a typo in here, so find it first!
+// TODO: apply Readonly<> to everything that can.
 
 export type Affine2D = [number, number, number, number, number, number];
 
@@ -93,7 +94,7 @@ function transformInvert(t: Affine2D): Affine2D {
   ];
 }
 
-function transformPoint(t: Affine2D, p: Point2D): Point2D {
+function transformPoint(t: Readonly<Affine2D>, p: Point2D): Point2D {
   return [
     p[0] * t[0] + p[1] * t[1] + t[2],
     p[0] * t[3] + p[1] * t[4] + t[5],

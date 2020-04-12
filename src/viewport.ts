@@ -27,6 +27,7 @@ export class Viewport {
     readonly ctx: CanvasRenderingContext2D;
     private pos: ViewportPosition;
     private t: Affine2D;
+    private invt: Affine2D;
     private clearStyle: null | string | CanvasGradient | CanvasPattern;
     private render: Render;
     private bounds: Bounds;
@@ -40,19 +41,18 @@ export class Viewport {
         this.render = render;
         this.resize = () => {
             const canvas = this.ctx.canvas;
-            const dpr = window.devicePixelRatio;
-            canvas.width = canvas.offsetWidth * dpr;
-            canvas.height = canvas.offsetHeight * dpr;
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
             this.setPosition(this.pos);
         }
         const canvas = this.ctx.canvas;
-        const dpr = window.devicePixelRatio;
-        canvas.width = canvas.offsetWidth * dpr;
-        canvas.height = canvas.offsetHeight * dpr;
+        canvas.width = canvas.offsetWidth;
+        canvas.height = canvas.offsetHeight;
 
         // Will be reset in setLocation below.
-        this.pos = { pos: [0.0, 0.0], scale: dpr, rotate: 0.0 };
+        this.pos = { pos: [0.0, 0.0], scale: 1.0, rotate: 0.0 };
         this.t = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        this.invt = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         this.bounds = [
             [0.0, 0.0],
             [0.0, 0.0],
@@ -67,13 +67,22 @@ export class Viewport {
         this.redraw();
     }
 
-    setPosition(pos: ViewportPosition) {
+    setPosition(pos: Partial<ViewportPosition>) {
+        if (pos.pos !== undefined) {
+            this.pos.pos = pos.pos;
+        }
+        if (pos.rotate !== undefined) {
+            this.pos.rotate = pos.rotate;
+        }
+        if (pos.scale !== undefined) {
+            this.pos.scale = pos.scale;
+        }
         const canvas = this.ctx.canvas;
         const width = canvas.width;
         const height = canvas.height;
-        let t = transformTranslateCreate(-pos.pos[0], -pos.pos[1]);
-        t = transformRotate(t, pos.rotate);
-        t = transformStretch(t, pos.scale, -pos.scale);
+        let t = transformTranslateCreate(-this.pos.pos[0], -this.pos.pos[1]);
+        t = transformRotate(t, this.pos.rotate);
+        t = transformStretch(t, this.pos.scale, -this.pos.scale);
         t = transformTranslate(t, width * 0.5, height * 0.5);
         this.t = t;
 
@@ -82,8 +91,20 @@ export class Viewport {
         this.bounds[1] = transformPoint(invt, [width, 0]);
         this.bounds[2] = transformPoint(invt, [0, height]);
         this.bounds[3] = transformPoint(invt, [width, height]);
-        this.pos = pos;
+        this.invt = invt;
         this.redraw();
+    }
+
+    position(): Readonly<ViewportPosition> {
+        return this.pos;
+    }
+
+    screen2world(): Readonly<Affine2D> {
+        return this.invt;
+    }
+
+    world2screen(): Readonly<Affine2D> {
+        return this.t;
     }
 
     redraw() {
