@@ -26,6 +26,7 @@ export interface Render {
 export class Viewport {
     readonly ctx: CanvasRenderingContext2D;
     private pos: ViewportPosition;
+    // TODO: t needs to be two things: world2screen, and world2canvas (since canvas can be different from screen due to devicePixelRatio)
     private t: Affine2D;
     private invt: Affine2D;
     private clearStyle: null | string | CanvasGradient | CanvasPattern;
@@ -41,6 +42,7 @@ export class Viewport {
         this.render = render;
         this.resize = () => {
             const canvas = this.ctx.canvas;
+            // TODO: support window.devicePixelRatio
             canvas.width = canvas.offsetWidth;
             canvas.height = canvas.offsetHeight;
             this.setPosition(this.pos);

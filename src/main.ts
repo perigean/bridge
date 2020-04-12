@@ -17,6 +17,7 @@ const vp = new Viewport(ctx, () => {
 
 window.addEventListener("resize", vp.resize);
 
+// TODO: TouchDemux in its own file
 export interface TouchHandler {
     start: (t: Touch) => void;
     move: (ts: TouchList) => void;
@@ -74,6 +75,7 @@ export class TouchDemux {
     }
 };
 
+// TODO: Gesture in its own file
 export type Tap = Array<Point2D>;
 
 export type Pan = Array<{
@@ -220,6 +222,7 @@ export interface ClipPosition {
     (pos: ViewportPosition): ViewportPosition;
 }
 
+// TODO: put this in it's own class
 new TouchDemux(c, new Gestures({
     tap: (t: Tap) => {
         console.log("tap: ", t);
@@ -228,11 +231,13 @@ new TouchDemux(c, new Gestures({
         console.log("pan: ", p);
         const pos = vp.position();
         const t = vp.screen2world();
-        const curr = transformPoint(t, p[0].curr);
-        const prev = transformPoint(t, p[0].prev);
+        const pp = p[p.length - 1];
+        const curr = transformPoint(t, pp.curr);
+        const prev = transformPoint(t, pp.prev);
         vp.setPosition({
             pos: pointAdd(pos.pos, pointSub(prev, curr)),
         });
+        // TODO: support two finger touch
     },
 }));
 
