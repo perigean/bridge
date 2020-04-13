@@ -232,7 +232,7 @@ new TouchDemux(c, new Gestures({
         console.log("tap: ", t, " world: ", transformPoint(s2w, t[0]));
     },
     pan: (p: Pan) => {
-        console.log("pan: ", p);
+        //console.log("pan: ", p);
         const pos = vp.position();
         const t = vp.screen2world();
         const pp = p[p.length - 1];

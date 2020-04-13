@@ -90,8 +90,6 @@ export class Viewport {
         this.w2s = w2;
         w2 = transformScale(w2, dpr);
         this.w2c = w2;
-        
-        console.log("vp.pos ", this.pos.pos);
 
         const s2w = transformInvert(this.w2s);
         this.bounds[0] = transformPoint(s2w, [0, 0]);
