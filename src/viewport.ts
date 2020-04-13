@@ -32,14 +32,50 @@ export class Viewport {
     private clearStyle: null | string | CanvasGradient | CanvasPattern;
     private render: Render;
     private bounds: Bounds;
-
     // Needs to be hooked up to DOM resize listener
     resize: () => void;
+    private redraw: () => void;
+    private clearRecentRedraw: () => void;
+    private recentRedraw: boolean;
+    private redrawRequested: boolean;
+
+    private requestRedraw() {
+        if (this.recentRedraw) {
+            this.redrawRequested = true;
+        } else {
+            this.redraw();
+        }
+    }
 
     constructor(ctx: CanvasRenderingContext2D, render: Render) {
         this.ctx = ctx;
         this.clearStyle = "white";
         this.render = render;
+        this.recentRedraw = false;
+        this.redrawRequested = false;
+        this.redraw = () => {
+            this.recentRedraw = true;
+            requestAnimationFrame(this.clearRecentRedraw);
+            const ctx = this.ctx;
+            if (this.clearStyle !== null) {
+                const fillStyle = ctx.fillStyle;
+                ctx.fillStyle = this.clearStyle;
+                ctx.resetTransform();
+                ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+                ctx.fillStyle = fillStyle;
+            }
+            const t = this.w2c;
+            ctx.setTransform(t[0], t[3], t[1], t[4], t[2], t[5]);
+            this.render(this.bounds, this.pos.scale, ctx);
+        }
+        this.clearRecentRedraw = () => {
+            const requested = this.redrawRequested;
+            this.recentRedraw = false;
+            this.redrawRequested = false;
+            if (requested) {
+                this.redraw();
+            }
+        }
         this.resize = () => {
             const canvas = this.ctx.canvas;
             canvas.width = canvas.offsetWidth * window.devicePixelRatio;
@@ -66,7 +102,7 @@ export class Viewport {
 
     setClearStyle(clearStyle: null | string | CanvasGradient | CanvasPattern) {
         this.clearStyle = clearStyle;
-        this.redraw();
+        this.requestRedraw();
     }
 
     setPosition(pos: Partial<ViewportPosition>) {
@@ -99,7 +135,7 @@ export class Viewport {
         this.bounds[2] = transformPoint(s2w, [0, height]);
         this.bounds[3] = transformPoint(s2w, [width, height]);
         this.s2w = s2w;
-        this.redraw();
+        this.requestRedraw();
     }
 
     position(): Readonly<ViewportPosition> {
@@ -113,19 +149,4 @@ export class Viewport {
     world2screen(): Readonly<Affine2D> {
         return this.w2s;
     }
-
-    redraw() {
-        const ctx = this.ctx;
-        if (this.clearStyle !== null) {
-            const fillStyle = ctx.fillStyle;
-            ctx.fillStyle = this.clearStyle;
-            ctx.resetTransform();
-            ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-            ctx.fillStyle = fillStyle;
-        }
-        const t = this.w2c;
-        ctx.setTransform(t[0], t[3], t[1], t[4], t[2], t[5]);
-        this.render(this.bounds, this.pos.scale, ctx);
-    }
-
 }
