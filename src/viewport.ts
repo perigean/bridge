@@ -2,7 +2,7 @@
 //
 // Copyright Charles Dick 2020
 import { Point2D } from "./point.js"
-import { Affine2D, transformTranslateCreate, transformRotate, transformStretch, transformInvert, transformPoint, transformTranslate } from './transform.js';
+import { Affine2D, transformTranslateCreate, transformRotate, transformStretch, transformInvert, transformPoint, transformTranslate, transformScale } from './transform.js';
 
 export const TOP_LEFT = 0;
 export const TOP_RIGHT = 1;
@@ -26,9 +26,9 @@ export interface Render {
 export class Viewport {
     readonly ctx: CanvasRenderingContext2D;
     private pos: ViewportPosition;
-    // TODO: t needs to be two things: world2screen, and world2canvas (since canvas can be different from screen due to devicePixelRatio)
-    private t: Affine2D;
-    private invt: Affine2D;
+    private w2c: Affine2D;  // World to canvas transform
+    private w2s: Affine2D;  // World to screen transform, different from w2c if window.devicePixelRatio != 1
+    private s2w: Affine2D;  // Screen to world transform
     private clearStyle: null | string | CanvasGradient | CanvasPattern;
     private render: Render;
     private bounds: Bounds;
@@ -42,19 +42,19 @@ export class Viewport {
         this.render = render;
         this.resize = () => {
             const canvas = this.ctx.canvas;
-            // TODO: support window.devicePixelRatio
-            canvas.width = canvas.offsetWidth;
-            canvas.height = canvas.offsetHeight;
+            canvas.width = canvas.offsetWidth * window.devicePixelRatio;
+            canvas.height = canvas.offsetHeight * window.devicePixelRatio;
             this.setPosition(this.pos);
         }
         const canvas = this.ctx.canvas;
-        canvas.width = canvas.offsetWidth;
-        canvas.height = canvas.offsetHeight;
+        canvas.width = canvas.offsetWidth * window.devicePixelRatio;
+        canvas.height = canvas.offsetHeight * window.devicePixelRatio;
 
         // Will be reset in setLocation below.
         this.pos = { pos: [0.0, 0.0], scale: 1.0, rotate: 0.0 };
-        this.t = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        this.invt = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        this.s2w = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        this.w2c = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        this.w2s = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         this.bounds = [
             [0.0, 0.0],
             [0.0, 0.0],
@@ -80,20 +80,25 @@ export class Viewport {
             this.pos.scale = pos.scale;
         }
         const canvas = this.ctx.canvas;
-        const width = canvas.width;
-        const height = canvas.height;
-        let t = transformTranslateCreate(-this.pos.pos[0], -this.pos.pos[1]);
-        t = transformRotate(t, this.pos.rotate);
-        t = transformStretch(t, this.pos.scale, -this.pos.scale);
-        t = transformTranslate(t, width * 0.5, height * 0.5);
-        this.t = t;
+        const dpr = window.devicePixelRatio;
+        const width = canvas.offsetWidth;
+        const height = canvas.offsetHeight;
+        let w2 = transformTranslateCreate(-this.pos.pos[0], -this.pos.pos[1]);
+        w2 = transformRotate(w2, this.pos.rotate);
+        w2 = transformStretch(w2, this.pos.scale, -this.pos.scale);
+        w2 = transformTranslate(w2, width * 0.5, height * 0.5);
+        this.w2s = w2;
+        w2 = transformScale(w2, dpr);
+        this.w2c = w2;
+        
+        console.log("vp.pos ", this.pos.pos);
 
-        const invt = transformInvert(t);
-        this.bounds[0] = transformPoint(invt, [0, 0]);
-        this.bounds[1] = transformPoint(invt, [width, 0]);
-        this.bounds[2] = transformPoint(invt, [0, height]);
-        this.bounds[3] = transformPoint(invt, [width, height]);
-        this.invt = invt;
+        const s2w = transformInvert(this.w2s);
+        this.bounds[0] = transformPoint(s2w, [0, 0]);
+        this.bounds[1] = transformPoint(s2w, [width, 0]);
+        this.bounds[2] = transformPoint(s2w, [0, height]);
+        this.bounds[3] = transformPoint(s2w, [width, height]);
+        this.s2w = s2w;
         this.redraw();
     }
 
@@ -102,11 +107,11 @@ export class Viewport {
     }
 
     screen2world(): Readonly<Affine2D> {
-        return this.invt;
+        return this.s2w;
     }
 
     world2screen(): Readonly<Affine2D> {
-        return this.t;
+        return this.w2s;
     }
 
     redraw() {
@@ -118,7 +123,7 @@ export class Viewport {
             ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
             ctx.fillStyle = fillStyle;
         }
-        const t = this.t;
+        const t = this.w2c;
         ctx.setTransform(t[0], t[3], t[1], t[4], t[2], t[5]);
         this.render(this.bounds, this.pos.scale, ctx);
     }

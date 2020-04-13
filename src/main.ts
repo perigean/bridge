@@ -12,7 +12,10 @@ if (ctx === null) {
 }
 const vp = new Viewport(ctx, () => {
     ctx.fillStyle = "black";
-    ctx.fillRect(-16, -16, 32, 32);
+    ctx.fillRect(-16, -16, 15, 15);
+    ctx.fillRect(1, -16, 15, 15);
+    ctx.fillRect(-16, 1, 15, 15);
+    ctx.fillRect(1, 1, 15, 15);
 });
 
 window.addEventListener("resize", vp.resize);
@@ -225,7 +228,8 @@ export interface ClipPosition {
 // TODO: put this in it's own class
 new TouchDemux(c, new Gestures({
     tap: (t: Tap) => {
-        console.log("tap: ", t);
+        const s2w = vp.screen2world();
+        console.log("tap: ", t, " world: ", transformPoint(s2w, t[0]));
     },
     pan: (p: Pan) => {
         console.log("pan: ", p);

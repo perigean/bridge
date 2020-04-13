@@ -63,8 +63,8 @@ function transformTranslate(t: Affine2D, x: number, y: number): Affine2D {
 
 function transformScale(t: Affine2D, s: number): Affine2D {
   return [
-    s * t[0], s * t[1], t[2],
-    s * t[3], s * t[4], t[5],
+    s * t[0], s * t[1], s * t[2],
+    s * t[3], s * t[4], s * t[5],
   ];
 }
 
