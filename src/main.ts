@@ -232,7 +232,7 @@ export class Gestures implements TouchHandler {
     }
 };
 
-// TODO: put this in it's own class
+// TODO: put this in its own class
 new TouchDemux(c, new Gestures({
     tap: (t: Tap) => {
         const s2w = vp.screen2world();
@@ -272,5 +272,10 @@ new TouchDemux(c, new Gestures({
         }
     },
 }));
+
+// TODO: mouse and trackpad input
+// drag is pan
+// scroll wheel zoom in and out
+// what to rotate? right click drag, rotate around center of vp? Maybe don't care, since bridge wont use rotate
 
 console.log("stuff loaded");
