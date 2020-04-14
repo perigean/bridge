@@ -18,6 +18,17 @@ const vp = new Viewport(ctx, () => {
     ctx.fillRect(1, 1, 15, 15);
 });
 
+function clip(v: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, v));
+}
+
+vp.setClipPosition((p: ViewportPosition): ViewportPosition => {
+    p.scale = clip(p.scale, 0.1, 10.0);
+    p.pos[0] = clip(p.pos[0], -256, 256);
+    p.pos[1] = clip(p.pos[1], -256, 256);
+    return p;
+});
+
 window.addEventListener("resize", vp.resize);
 
 // TODO: TouchDemux in its own file
@@ -220,10 +231,6 @@ export class Gestures implements TouchHandler {
         }
     }
 };
-
-export interface ClipPosition {
-    (pos: ViewportPosition): ViewportPosition;
-}
 
 // TODO: put this in it's own class
 new TouchDemux(c, new Gestures({

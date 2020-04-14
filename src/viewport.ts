@@ -17,6 +17,10 @@ export type ViewportPosition = {
     rotate: number;
 };
 
+export interface ClipPosition {
+    (pos: ViewportPosition): ViewportPosition;
+}
+
 export interface Render {
     (b: Bounds, s: number, ctx: CanvasRenderingContext2D): void;
 }
@@ -34,6 +38,10 @@ export class Viewport {
     private bounds: Bounds;
     // Needs to be hooked up to DOM resize listener
     resize: () => void;
+
+    private posClipper: ClipPosition | null;
+
+    // Redraw debouncing methods
     private redraw: () => void;
     private clearRecentRedraw: () => void;
     private recentRedraw: boolean;
@@ -50,6 +58,7 @@ export class Viewport {
     constructor(ctx: CanvasRenderingContext2D, render: Render) {
         this.ctx = ctx;
         this.clearStyle = "white";
+        this.posClipper = null;
         this.render = render;
         this.recentRedraw = false;
         this.redrawRequested = false;
@@ -105,15 +114,28 @@ export class Viewport {
         this.requestRedraw();
     }
 
+    setClipPosition(clip: ClipPosition) {
+        this.posClipper = clip;
+    }
+
     setPosition(pos: Partial<ViewportPosition>) {
         if (pos.pos !== undefined) {
             this.pos.pos = pos.pos;
         }
         if (pos.rotate !== undefined) {
-            this.pos.rotate = pos.rotate;
+            if (pos.rotate >= Math.PI) {
+                this.pos.rotate = pos.rotate - Math.floor(pos.rotate / (2.0 * Math.PI)) * 2.0 * Math.PI;
+            } else if (pos.rotate < -Math.PI) {
+                this.pos.rotate = pos.rotate - Math.ceil(pos.rotate / (2.0 * Math.PI)) * 2.0 * Math.PI;
+            } else {
+                this.pos.rotate = pos.rotate;
+            }
         }
         if (pos.scale !== undefined) {
             this.pos.scale = pos.scale;
+        }
+        if (this.posClipper !== null) {
+            this.pos = this.posClipper(this.pos);
         }
         const canvas = this.ctx.canvas;
         const dpr = window.devicePixelRatio;
