@@ -1,6 +1,6 @@
 import { Viewport, ViewportPosition } from "./viewport.js"
-import { Point2D, pointDistance, pointEquals, pointSub, pointAdd } from "./point.js"
-import { transformPoint } from "./transform.js";
+import { Point2D, pointDistance, pointEquals, pointSub, pointAdd, pointAngle } from "./point.js"
+import { transformPoint, transformTranslateCreate, transformRotate, transformScale, transformTranslate } from "./transform.js";
 
 const c = (document.getElementById("canvas") as HTMLCanvasElement);
 if (c === null) {
@@ -231,17 +231,38 @@ new TouchDemux(c, new Gestures({
         const s2w = vp.screen2world();
         console.log("tap: ", t, " world: ", transformPoint(s2w, t[0]));
     },
-    pan: (p: Pan) => {
-        //console.log("pan: ", p);
+    pan: (ps: Pan) => {
         const pos = vp.position();
-        const t = vp.screen2world();
-        const pp = p[p.length - 1];
-        const curr = transformPoint(t, pp.curr);
-        const prev = transformPoint(t, pp.prev);
-        vp.setPosition({
-            pos: pointAdd(pos.pos, pointSub(prev, curr)),
-        });
-        // TODO: support two finger touch
+        const s2w = vp.screen2world();
+        if (ps.length == 1) {
+            const p = ps[ps.length - 1];
+            const curr = transformPoint(s2w, p.curr);
+            const prev = transformPoint(s2w, p.prev);
+            vp.setPosition({
+                pos: pointAdd(pos.pos, pointSub(prev, curr)),
+            });
+        } else if (ps.length >= 2) {
+            const p1 = ps[ps.length - 1];
+            const p2 = ps[ps.length - 2];
+            
+            const wp1prev = transformPoint(s2w, p1.prev);
+            const curra = pointAngle(pointSub(p2.curr, p1.curr));
+            const preva = pointAngle(pointSub(p2.prev, p1.prev));
+            const currl = pointDistance(p1.curr, p2.curr);
+            const prevl = pointDistance(p1.prev, p2.prev);
+            const wp1curr = transformPoint(s2w, p1.curr);
+            let t = transformTranslateCreate(-wp1curr[0], -wp1curr[1]);
+            t = transformScale(t, prevl / currl);
+            t = transformRotate(t, preva - curra);
+            t = transformTranslate(t, wp1prev[0], wp1prev[1]);
+            // TODO: why does this work? Isn't it backwards?
+
+            vp.setPosition({
+                pos: transformPoint(t, pos.pos),
+                scale: pos.scale * currl / prevl,
+                rotate: pos.rotate - preva + curra,
+            });
+        }
     },
 }));
 
