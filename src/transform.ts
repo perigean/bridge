@@ -1,6 +1,4 @@
-// transform.js
-//
-// Copyright Charles Dick 2020
+// Copyright Charles Dueck 2020
 
 import {Point2D} from "point.js"
 

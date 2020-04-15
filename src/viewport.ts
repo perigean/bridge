@@ -1,8 +1,8 @@
-// viewport.js
-//
-// Copyright Charles Dick 2020
-import { Point2D } from "./point.js"
+// Copyright Charles Dueck 2020
+
+import { Point2D, pointAdd, pointSub, pointAngle, pointDistance } from "./point.js"
 import { Affine2D, transformTranslateCreate, transformRotate, transformStretch, transformInvert, transformPoint, transformTranslate, transformScale } from './transform.js';
+import { GestureHandler, Tap, Pan } from "./gesture.js";
 
 export const TOP_LEFT = 0;
 export const TOP_RIGHT = 1;
@@ -168,5 +168,67 @@ export class Viewport {
 
     world2screen(): Readonly<Affine2D> {
         return this.w2s;
+    }
+}
+
+export class PanGesture implements GestureHandler {
+    private vp: Viewport;
+
+    constructor(vp: Viewport) {
+        this.vp = vp;
+    }
+
+    tap(_t: Tap) { }
+
+    pan(ps: Pan) {
+        if (ps.length != 1) {
+            return;
+        }
+        const pos = this.vp.position();
+        const s2w = this.vp.screen2world();
+        const p = ps[ps.length - 1];
+        const curr = transformPoint(s2w, p.curr);
+        const prev = transformPoint(s2w, p.prev);
+        this.vp.setPosition({
+            pos: pointAdd(pos.pos, pointSub(prev, curr)),
+        });
+    }
+}
+
+export class PinchZoomGesture implements GestureHandler {
+    private vp: Viewport;
+
+    constructor(vp: Viewport) {
+        this.vp = vp;
+    }
+
+    tap(_t: Tap) { }
+
+    pan(ps: Pan) {
+        if (ps.length < 2) {
+            return;
+        }
+        const pos = this.vp.position();
+        const s2w = this.vp.screen2world();
+        const p1 = ps[ps.length - 1];
+        const p2 = ps[ps.length - 2];
+
+        const wp1prev = transformPoint(s2w, p1.prev);
+        const curra = pointAngle(pointSub(p2.curr, p1.curr));
+        const preva = pointAngle(pointSub(p2.prev, p1.prev));
+        const currl = pointDistance(p1.curr, p2.curr);
+        const prevl = pointDistance(p1.prev, p2.prev);
+        const wp1curr = transformPoint(s2w, p1.curr);
+        let t = transformTranslateCreate(-wp1curr[0], -wp1curr[1]);
+        t = transformScale(t, prevl / currl);
+        t = transformRotate(t, preva - curra);
+        t = transformTranslate(t, wp1prev[0], wp1prev[1]);
+        // TODO: why does this work? Isn't it backwards?
+
+        this.vp.setPosition({
+            pos: transformPoint(t, pos.pos),
+            scale: pos.scale * currl / prevl,
+            rotate: pos.rotate - preva + curra,
+        });
     }
 }

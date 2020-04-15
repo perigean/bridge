@@ -1,3 +1,4 @@
+// Copyright Charles Dueck 2020
 
 export type Point2D = [number, number];
 
