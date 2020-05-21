@@ -47,7 +47,7 @@ export class Viewport {
     private recentRedraw: boolean;
     private redrawRequested: boolean;
 
-    private requestRedraw() {
+    requestRedraw() {
         if (this.recentRedraw) {
             this.redrawRequested = true;
         } else {
@@ -116,6 +116,7 @@ export class Viewport {
 
     setClipPosition(clip: ClipPosition) {
         this.posClipper = clip;
+        this.setPosition(this.pos);
     }
 
     setPosition(pos: Partial<ViewportPosition>) {
