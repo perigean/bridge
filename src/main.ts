@@ -90,7 +90,7 @@ const vp = new Viewport(ctx, (_b, _s, ctx: CanvasRenderingContext2D) => {
 
 function mainLoop(_now: DOMHighResTimeStamp) {
     for (let i = 0; i < 10; i++) {
-        ode.next(0.016666666);
+        ode.next(0.016666666);  // 600fps.
     }
     vp.requestRedraw();
     requestAnimationFrame(mainLoop);

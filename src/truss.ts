@@ -59,10 +59,62 @@ export function trussMethod(truss: Truss): ODEMethod {
             return pins[pin][1];
         }
     }
+    function getvx(y: Float32Array, pin: number): number {
+        if (pin < mobilePins) {
+            return y[mobilePins * 2 + pin * 2 + 0];
+        } else {
+            return 0.0;
+        }
+    }
+    function getvy(y: Float32Array, pin: number): number {
+        if (pin < mobilePins) {
+            return y[mobilePins * 2 + pin * 2 + 1]; 
+        } else {
+            return 0;
+        }
+    }
+    function setdx(y: Float32Array, pin: number, val: number) {
+        if (pin < mobilePins) {
+            y[pin * 2 + 0] = val;
+        }
+    }
+    function setdy(y: Float32Array, pin: number, val: number) {
+        if (pin < mobilePins) {
+            y[pin * 2 + 1] = val;
+        }
+    }
+    function setvx(y: Float32Array, pin: number, val: number) {
+        if (pin < mobilePins) {
+            y[mobilePins * 2 + pin * 2 + 0] = val;
+        }
+    }
+    function setvy(y: Float32Array, pin: number, val: number) {
+        if (pin < mobilePins) {
+            y[mobilePins * 2 + pin * 2 + 1] = val;
+        }
+    }
+    function addvx(y: Float32Array, pin: number, val: number) {
+        if (pin < mobilePins) {
+            y[mobilePins * 2 + pin * 2 + 0] += val;
+        }
+    }
+    function addvy(y: Float32Array, pin: number, val: number) {
+        if (pin < mobilePins) {
+            y[mobilePins * 2 + pin * 2 + 1] += val;
+        }
+    }
     
     // Split beam mass evenly between pins, initialise beam length.
     const materials = truss.materials;
     const mass = new Float32Array(mobilePins);
+    function getm(pin: number): number {
+        if (pin < mobilePins) {
+            return mass[pin];
+        } else {
+            return -1.0;
+        }
+    }
+
     const beams = truss.beams.map((beam: Beam): SimulationBeam => {
         const p1 = beam.p1;
         const p2 = beam.p2;
@@ -80,22 +132,22 @@ export function trussMethod(truss: Truss): ODEMethod {
     // Set up initial ODE state vector.
     const y0 = new Float32Array(mobilePins * 4);
     for (let i = 0; i < mobilePins; i++) {
-        y0[i * 2 + 0] = pins[i][0];
-        y0[i * 2 + 1] = pins[i][1];
+        setdx(y0, i, pins[i][0]);
+        setdy(y0, i, pins[i][1]);
     }
-    // NB: Initial velocities are all 0.
+    // NB: Initial velocities are all 0, no need to initialize.
 
     const g =  truss.g;
     return new RungeKutta4(y0, function (_t: number, y: Float32Array, dydt: Float32Array) {
         // Derivative of position is velocity.
         for (let i = 0; i < mobilePins; i++) {
-            dydt[i * 2 + 0] = y[mobilePins * 2 + i * 2 + 0];
-            dydt[i * 2 + 1] = y[mobilePins * 2 + i * 2 + 1];
+            setdx(dydt, i, getvx(y, i));
+            setdy(dydt, i, getvy(y, i));
         }
         // Acceleration due to gravity.
         for (let i = 0; i < mobilePins; i++) {
-            dydt[mobilePins * 2 + i * 2 + 0] = g[0];
-            dydt[mobilePins * 2 + i * 2 + 1] = g[1];
+            setvx(dydt, i, g[0]);
+            setvy(dydt, i, g[1]);
         }
         // Acceleration due to beam stress.
         for (const beam of beams) {
@@ -107,15 +159,40 @@ export function trussMethod(truss: Truss): ODEMethod {
             const dx = getdx(y, p2) - getdx(y, p1);
             const dy = getdy(y, p2) - getdy(y, p1);
             const l = Math.sqrt(dx * dx + dy * dy);
-            const strain = (l - l0) / l0;
-            const stress = strain * E * w;
-            if (p1 < mobilePins) {
-                dydt[mobilePins * 2 + p1 * 2 + 0] += (dx * stress) / (l * mass[p1]);
-                dydt[mobilePins * 2 + p1 * 2 + 1] += (dy * stress) / (l * mass[p1]);
-            }
-            if (p2 < mobilePins) {
-                dydt[mobilePins * 2 + p2 * 2 + 0] -= (dx * stress) / (l * mass[p2]);
-                dydt[mobilePins * 2 + p2 * 2 + 1] -= (dy * stress) / (l * mass[p2]);
+            //const strain = (l - l0) / l0;
+            //const stress = strain * E * w;
+            const k = E * w / l0;
+            const springF = (l - l0) * k;
+            const m1 = getm(p1);    // Pin mass
+            const m2 = getm(p2);
+            const ux = dx / l;      // Unit vector in directino of beam;
+            const uy = dy / l;
+
+            // Beam stress force.
+            addvx(dydt, p1, ux * springF / m1);
+            addvy(dydt, p1, uy * springF / m1);
+            addvx(dydt, p2, -ux * springF / m2);
+            addvy(dydt, p2, -uy * springF / m2);
+
+            // Damping force.
+            const zeta = 0.5;
+            const vx = getvx(y, p2) - getvx(y, p1); // Velocity of p2 relative to p1.
+            const vy = getvy(y, p2) - getvy(y, p1);
+            const v = vx * ux + vy * uy;    // Velocity of p2 relative to p1 in direction of beam.
+            if (p1 < mobilePins && p2 < mobilePins) {
+                const dampF = v * zeta * Math.sqrt(k * m1 * m2 / (m1 + m2));
+                addvx(dydt, p1, ux * dampF / m1);
+                addvy(dydt, p1, uy * dampF / m1);
+                addvx(dydt, p2, -ux * dampF / m2);
+                addvy(dydt, p2, -uy * dampF / m2);
+            } else if (p1 < mobilePins) {
+                const dampF = v * zeta * Math.sqrt(k * m1);
+                addvx(dydt, p1, ux * dampF / m1);
+                addvy(dydt, p1, uy * dampF / m1);
+            } else if (p2 < mobilePins) {
+                const dampF = v * zeta * Math.sqrt(k * m2);
+                addvx(dydt, p2, -ux * dampF / m2);
+                addvy(dydt, p2, -uy * dampF / m2);
             }
         }
     });
