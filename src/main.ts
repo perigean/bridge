@@ -88,14 +88,23 @@ const vp = new Viewport(ctx, (_b, _s, ctx: CanvasRenderingContext2D) => {
     render(ctx, ode);
 });
 
-function mainLoop(_now: DOMHighResTimeStamp) {
-    for (let i = 0; i < 10; i++) {
-        ode.next(0.016666666);  // 600fps.
+const h = 0.001;
+requestAnimationFrame((t0: DOMHighResTimeStamp) => {
+    function mainLoop(t: DOMHighResTimeStamp) {
+        // Compute up to 250ms worth of frames at a time.
+        const dt = Math.min(t - t0, 250.0);
+        const frames = Math.floor(dt / (1000.0 * h));
+        for (let i = 0; i < frames; i++) {
+            ode.next(h);
+        }
+        console.log(frames);
+        vp.requestRedraw();
+        // Only let the physics backlog get to 250ms.
+        t0 = Math.max(t0 + frames * h * 1000.0, t - 250.0);
+        requestAnimationFrame(mainLoop);
     }
-    vp.requestRedraw();
     requestAnimationFrame(mainLoop);
-}
-requestAnimationFrame(mainLoop);
+});
 
 
 function clip(v: number, min: number, max: number): number {
