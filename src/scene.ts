@@ -30,14 +30,28 @@ export type Material = {
 };
 
 export type Truss = {
-    pins: Array<Point2D>,
-    mobilePins: number, // The number of pins which are not fixed.
-    beams: Array<Beam>,
-    materials: Array<Material>,
-    g: Point2D,  // Acceleration due to gravity.
+    pins: Array<Point2D>;
+    mobilePins: number; // The number of pins which are not fixed.
+    beams: Array<Beam>;
+    materials: Array<Material>;
 };
 
-export function trussMethod(truss: Truss): ODEMethod {
+export type Terrain = {
+    hmap: Array<number>;
+    pitch: number;
+    style: string | CanvasGradient | CanvasPattern;
+};
+
+export type Scene = {
+    truss: Truss;
+    terrain: Terrain;
+    height: number;
+    // NB: Scene width is determined by terrain width.
+    g: Point2D;  // Acceleration due to gravity.
+}
+
+export function sceneMethod(scene: Scene): ODEMethod {
+    const truss = scene.truss;
     const mobilePins = truss.mobilePins;
     const pins = truss.pins;
     if (mobilePins <= 0 || mobilePins >= pins.length) {
@@ -137,7 +151,7 @@ export function trussMethod(truss: Truss): ODEMethod {
     }
     // NB: Initial velocities are all 0, no need to initialize.
 
-    const g =  truss.g;
+    const g =  scene.g;
     return new RungeKutta4(y0, function (_t: number, y: Float32Array, dydt: Float32Array) {
         // Derivative of position is velocity.
         for (let i = 0; i < mobilePins; i++) {
@@ -202,13 +216,29 @@ export interface TrussRender {
     (ctx: CanvasRenderingContext2D, ode: ODEMethod): void;
 }
 
-export function trussRenderer(truss: Truss): TrussRender {
+export function sceneRenderer(scene: Scene): TrussRender {
+    const truss = scene.truss;
     const pins = truss.pins;
     const beams = truss.beams;
     const materials = truss.materials;
     const mobilePins = truss.mobilePins;
 
     return function(ctx: CanvasRenderingContext2D, ode: ODEMethod) {
+        // Terrain.
+        const terrain = scene.terrain;
+        const hmap = terrain.hmap;
+        ctx.beginPath();
+        ctx.fillStyle = terrain.style;
+        ctx.moveTo(0.0, 0.0);
+        let x = 0.0;
+        for (let i = 0; i < hmap.length; i++) {
+            ctx.lineTo(x, hmap[i]);
+            x += terrain.pitch;
+        }
+        ctx.lineTo(x - terrain.pitch, 0.0);
+        ctx.lineTo(0.0, 0.0);
+        ctx.fill();
+        // Beams.
         const y = ode.y;
         for (const beam of beams) {
             ctx.strokeStyle = materials[beam.m].style;
