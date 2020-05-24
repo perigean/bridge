@@ -234,6 +234,7 @@ export function sceneMethod(scene: Scene): ODEMethod {
             }
         }
         // Acceleration due to terrain collision.
+        const friction = 0.5;
         for (let i = 0; i < mobilePins; i++) {
             const dx = getdx(y, i); // Pin position.
             const dy = getdy(y, i);
@@ -253,9 +254,21 @@ export function sceneMethod(scene: Scene): ODEMethod {
             if (at > 0.0) {
                 addvx(dydt, i, nx * at);
                 addvy(dydt, i, ny * at);
-                // TODO: friction.
+                // Friction.
                 // Apply acceleration in proportion to at, in direction opposite of tangent projected velocity.
-                // Cap acceleration (including from other sources) in direction of tangent to be less than some proportion of speed.
+                // Cap acceleration by some fraction of velocity
+                const tx = ny;
+                const ty = -nx;
+                const tv = getvx(y, i) * tx + getvy(y, i) * ty;
+                if (tv >= 0.0) {
+                    const af = -Math.min(friction * at, tv * 100);
+                    addvx(dydt, i, tx * af);
+                    addvy(dydt, i, ty * af);
+                } else {
+                    const af = Math.min(friction * at, -tv * 100);
+                    addvx(dydt, i, tx * af);
+                    addvy(dydt, i, ty * af);
+                }
             }
         }
     });
