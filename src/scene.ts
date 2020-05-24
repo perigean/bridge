@@ -42,6 +42,12 @@ export type Terrain = {
     style: string | CanvasGradient | CanvasPattern;
 };
 
+type SimulationHMap = Array<{
+    height: number;
+    nx: number; // Normal unit vector.
+    ny: number;
+}>;
+
 export type Scene = {
     truss: Truss;
     terrain: Terrain;
@@ -54,7 +60,7 @@ export function sceneMethod(scene: Scene): ODEMethod {
     const truss = scene.truss;
     const mobilePins = truss.mobilePins;
     const pins = truss.pins;
-    if (mobilePins <= 0 || mobilePins >= pins.length) {
+    if (mobilePins <= 0 || mobilePins > pins.length) {
         throw new Error("Invalid mobilePins");
     }
 
@@ -143,6 +149,24 @@ export function sceneMethod(scene: Scene): ODEMethod {
         return { p1, p2, m: beam.m, w: beam.w, l: beam.l || l };
     });
 
+    const pitch = scene.terrain.pitch;
+    const hmap: SimulationHMap = scene.terrain.hmap.map((h, i) => {
+        if (i + 1 >= scene.terrain.hmap.length) {
+            return {
+                height: h,
+                nx: 0.0,
+                ny: 1.0,
+            };
+        }
+        const dy = scene.terrain.hmap[i + 1] - h;
+        const l = Math.sqrt(dy * dy + pitch * pitch);
+        return {
+            height: h,
+            nx: -dy / l,
+            ny: pitch / l,
+        };
+    });
+
     // Set up initial ODE state vector.
     const y0 = new Float32Array(mobilePins * 4);
     for (let i = 0; i < mobilePins; i++) {
@@ -209,6 +233,31 @@ export function sceneMethod(scene: Scene): ODEMethod {
                 addvy(dydt, p2, -uy * dampF / m2);
             }
         }
+        // Acceleration due to terrain collision.
+        for (let i = 0; i < mobilePins; i++) {
+            const dx = getdx(y, i); // Pin position.
+            const dy = getdy(y, i);
+            let at = 1000.0; // Acceleration per metre of depth under terrain.
+            let nx; // Terrain unit normal.
+            let ny;
+            if (dx < 0.0) {
+                nx = 0.0;
+                ny = 1.0;
+                at *= -(nx * (dx - 0.0) + ny * (dy - hmap[0].height));
+            } else {
+                const ti = Math.min(hmap.length - 1, Math.floor(dx / pitch));
+                nx = hmap[ti].nx;
+                ny = hmap[ti].ny;
+                at *= -(nx * (dx - ti * pitch) + ny * (dy - hmap[ti].height));
+            }
+            if (at > 0.0) {
+                addvx(dydt, i, nx * at);
+                addvy(dydt, i, ny * at);
+                // TODO: friction.
+                // Apply acceleration in proportion to at, in direction opposite of tangent projected velocity.
+                // Cap acceleration (including from other sources) in direction of tangent to be less than some proportion of speed.
+            }
+        }
     });
 }
 
@@ -223,21 +272,24 @@ export function sceneRenderer(scene: Scene): TrussRender {
     const materials = truss.materials;
     const mobilePins = truss.mobilePins;
 
+    // Pre-render terrain.
+    const terrain = scene.terrain;
+    const hmap = terrain.hmap;
+    const terrainPath = new Path2D();
+    terrainPath.moveTo(0.0, 0.0);
+    let x = 0.0;
+    for (let i = 0; i < hmap.length; i++) {
+        terrainPath.lineTo(x, hmap[i]);
+        x += terrain.pitch;
+    }
+    terrainPath.lineTo(x - terrain.pitch, 0.0);
+    terrainPath.closePath();
+
     return function(ctx: CanvasRenderingContext2D, ode: ODEMethod) {
         // Terrain.
-        const terrain = scene.terrain;
-        const hmap = terrain.hmap;
-        ctx.beginPath();
         ctx.fillStyle = terrain.style;
-        ctx.moveTo(0.0, 0.0);
-        let x = 0.0;
-        for (let i = 0; i < hmap.length; i++) {
-            ctx.lineTo(x, hmap[i]);
-            x += terrain.pitch;
-        }
-        ctx.lineTo(x - terrain.pitch, 0.0);
-        ctx.lineTo(0.0, 0.0);
-        ctx.fill();
+        ctx.fill(terrainPath);
+
         // Beams.
         const y = ode.y;
         for (const beam of beams) {

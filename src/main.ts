@@ -30,7 +30,7 @@ const scene: Scene = {
             [30.0, 30.0],
             [50.0, 30.0],
         ],
-        mobilePins: 7,
+        mobilePins: 8,
         beams: [
             { p1: 0, p2: 1, m: 0, w: 0.1 },
             { p1: 1, p2: 2, m: 0, w: 0.1 },
@@ -57,15 +57,15 @@ const scene: Scene = {
     terrain: {
         hmap: [
             40.0,
-            20.0,
-            20.0,
-            20.0,
-            20.0,
-            20.0,
-            20.0,
-            20.0,
-            20.0,
-            20.0,
+            16.0,
+            14.0,
+            12.0,
+            10.0,
+            8.0,
+            6.0,
+            5.0,
+            4.0,
+            4.0,
             40.0,
         ],
         style: "darkgrey",
@@ -128,15 +128,20 @@ gesture.addGestureHandler(new PinchZoomGesture(vp));
 // scroll wheel zoom in and out
 // what to rotate? right click drag, rotate around center of vp? Maybe don't care, since bridge wont use rotate
 
-// TODO: pins in simulation are repelled by terrain
 // TODO: pins in simulation have friction on terrain
 
 // TODO: discs. Attached to pins, repel terrain at a distance (with friction)
 // TODO: discs can rotate at a fixed rate. Rotation only applies to friction force calculation.
+// TOOD: dicsc just radius on pin?
 
 // TODO: deck beams. Like regular beams, but repel discs
 
 // TODO: rewrite viewport etc. to not take callbacks, just call into it to explcitly set up canvas, etc.
 
 // TODO: Physics calculation in a web-worker.
+
+// TODO: Air resistance, or at least damping of pin movement, not just beam spring forces. Keep beam damping, this should be independent.
+
+// TODO: Beam buckling.
+
 console.log("stuff loaded");
