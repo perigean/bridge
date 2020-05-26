@@ -46,6 +46,10 @@ const scene: Scene = {
             { p1: 4, p2: 5, m: 0, w: 0.1 },
             { p1: 5, p2: 7, m: 0, w: 0.1 },
         ],
+        discs: [
+            { p: 6, r: 1.25, friction: 0.9 },
+            { p: 7, r: 1.25, friction: 0.9 },
+        ],
         materials: [
             {   // Rubber.
                 E: 20000000.0,
@@ -70,6 +74,7 @@ const scene: Scene = {
         ],
         style: "darkgrey",
         pitch: 10.0,
+        friction: 0.5,
     },
     height: 100.0,
     g: [0.0, -9.8],
@@ -128,11 +133,12 @@ gesture.addGestureHandler(new PinchZoomGesture(vp));
 // scroll wheel zoom in and out
 // what to rotate? right click drag, rotate around center of vp? Maybe don't care, since bridge wont use rotate
 
-// TODO: pins in simulation have friction on terrain
+// TODO: https://developer.mozilla.org/en-US/docs/Web/API/Element/requestFullscreen
+// https://developer.mozilla.org/en-US/docs/Web/API/Fullscreen_API/Guide
+// Look into this
 
 // TODO: discs. Attached to pins, repel terrain at a distance (with friction)
 // TODO: discs can rotate at a fixed rate. Rotation only applies to friction force calculation.
-// TOOD: dicsc just radius on pin?
 
 // TODO: deck beams. Like regular beams, but repel discs
 

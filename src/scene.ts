@@ -21,6 +21,12 @@ type SimulationBeam = {
     l: number;
 }
 
+export type Disc = {
+    p: number;  // Index of moveable pin this disc surrounds.
+    r: number;  // Radius of disc.
+    friction: number;   // Coefficient of friction (multiplied with contact material coefficient)
+};
+
 export type Material = {
     E: number;  // Young's modulus in Pa.
     density: number;    // kg/m^3
@@ -33,12 +39,14 @@ export type Truss = {
     pins: Array<Point2D>;
     mobilePins: number; // The number of pins which are not fixed.
     beams: Array<Beam>;
+    discs: Array<Disc>;
     materials: Array<Material>;
 };
 
 export type Terrain = {
     hmap: Array<number>;
     pitch: number;
+    friction: number;
     style: string | CanvasGradient | CanvasPattern;
 };
 
@@ -166,6 +174,7 @@ export function sceneMethod(scene: Scene): ODEMethod {
             ny: pitch / l,
         };
     });
+    const friction = scene.terrain.friction;
 
     // Set up initial ODE state vector.
     const y0 = new Float32Array(mobilePins * 4);
@@ -234,7 +243,6 @@ export function sceneMethod(scene: Scene): ODEMethod {
             }
         }
         // Acceleration due to terrain collision.
-        const friction = 0.5;
         for (let i = 0; i < mobilePins; i++) {
             const dx = getdx(y, i); // Pin position.
             const dy = getdy(y, i);
@@ -303,8 +311,19 @@ export function sceneRenderer(scene: Scene): TrussRender {
         ctx.fillStyle = terrain.style;
         ctx.fill(terrainPath);
 
-        // Beams.
         const y = ode.y;
+
+        // Discs
+        const discs = truss.discs;
+        ctx.beginPath();
+        ctx.fillStyle = "red";
+        for (const disc of discs) {
+            const p = disc.p;
+            ctx.arc(y[p * 2 + 0], y[p * 2 + 1], disc.r, 0.0, 2 * Math.PI);
+        }
+        ctx.fill("nonzero");
+
+        // Beams.
         for (const beam of beams) {
             ctx.strokeStyle = materials[beam.m].style;
             ctx.lineWidth = beam.w;
