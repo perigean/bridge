@@ -11,6 +11,7 @@ export type Beam = {
     m: number;  // Index of material of beam.
     w: number;  // Width of beam.
     l?: number; // Length of beam, only specified when pre-straining.
+    deck?: boolean; // Is this beam a deck? (do discs collide)
 };
 
 type SimulationBeam = {
@@ -19,6 +20,7 @@ type SimulationBeam = {
     m: number;
     w: number;
     l: number;
+    deck: boolean;
 }
 
 export type Disc = {
@@ -54,6 +56,8 @@ type SimulationHMap = Array<{
     height: number;
     nx: number; // Normal unit vector.
     ny: number;
+    decks: Array<SimulationBeam>;   // Updated every frame, all decks above this segment.
+    deckCount: number;  // Number of indices in decks being used.
 }>;
 
 export type Scene = {
@@ -154,7 +158,7 @@ export function sceneMethod(scene: Scene): ODEMethod {
         if (p2 < mobilePins) {
             mass[p2] += m * 0.5;
         }
-        return { p1, p2, m: beam.m, w: beam.w, l: beam.l || l };
+        return { p1, p2, m: beam.m, w: beam.w, l: beam.l || l, deck: beam.deck || false };
     });
 
     const pitch = scene.terrain.pitch;
@@ -164,6 +168,8 @@ export function sceneMethod(scene: Scene): ODEMethod {
                 height: h,
                 nx: 0.0,
                 ny: 1.0,
+                decks: [],
+                deckCount: 0,
             };
         }
         const dy = scene.terrain.hmap[i + 1] - h;
@@ -172,9 +178,25 @@ export function sceneMethod(scene: Scene): ODEMethod {
             height: h,
             nx: -dy / l,
             ny: pitch / l,
+            decks: [],
+            deckCount: 0,
         };
     });
+    function resetDecks() {
+        for (const h of hmap) {
+            h.deckCount = 0;
+        }
+    }
+    function addDeck(i: number, d: SimulationBeam) {
+        if (i < 0 || i >= hmap.length) {
+            return;
+        }
+        const h = hmap[i];
+        h.decks[h.deckCount] = d;
+        h.deckCount++;
+    }
     const friction = scene.terrain.friction;
+    const discs = scene.truss.discs;
 
     // Set up initial ODE state vector.
     const y0 = new Float32Array(mobilePins * 4);
@@ -196,6 +218,10 @@ export function sceneMethod(scene: Scene): ODEMethod {
             setvx(dydt, i, g[0]);
             setvy(dydt, i, g[1]);
         }
+
+        // Decks are updated in hmap in the below loop through beams, so clear the previous values.
+        resetDecks();
+
         // Acceleration due to beam stress.
         for (const beam of beams) {
             const E = materials[beam.m].E;
@@ -241,8 +267,19 @@ export function sceneMethod(scene: Scene): ODEMethod {
                 addvx(dydt, p2, -ux * dampF / m2);
                 addvy(dydt, p2, -uy * dampF / m2);
             }
+
+            // Add decks to accleration structure
+            if (beam.deck) {
+                const i1 = Math.floor(getdx(y, p1) / pitch);
+                const i2 = Math.floor(getdx(y, p2) / pitch);
+                const begin = Math.min(i1, i2);
+                const end = Math.max(i1, i2);
+                for (let i = begin; i <= end; i++) {
+                    addDeck(i, beam);
+                }
+            }
         }
-        // Acceleration due to terrain collision.
+        // Acceleration due to terrain collision, scene border collision
         for (let i = 0; i < mobilePins; i++) {
             const dx = getdx(y, i); // Pin position.
             const dy = getdy(y, i);
@@ -276,6 +313,87 @@ export function sceneMethod(scene: Scene): ODEMethod {
                     const af = Math.min(friction * at, -tv * 100);
                     addvx(dydt, i, tx * af);
                     addvy(dydt, i, ty * af);
+                }
+            }
+        }
+        // TODO: Acceleration due to disc-terrain collision.
+
+        // TODO: Acceleration due to disc-deck collision.
+        for (const disc of discs) {
+            const r = disc.r;
+            const dx = getdx(y, disc.p);
+            // Loop through all hmap buckets that disc overlaps.
+            const i1 = Math.floor((dx - r) / pitch);
+            const i2 = Math.floor((dx + r) / pitch);
+            for (let i = i1; i <= i2; i++) {
+                if (i < 0 || i >= hmap.length) {
+                    continue;
+                }
+                // Loop through all decks in those buckets.
+                const decks = hmap[i].decks;
+                const deckCount = hmap[i].deckCount;
+                for (let j = 0; j < deckCount; j++) {
+                    const deck = decks[j];
+                    const dy = getdy(y, disc.p);
+                    const x1 = getdx(y, deck.p1);
+                    const y1 = getdy(y, deck.p1);
+                    const x2 = getdx(y, deck.p2);
+                    const y2 = getdy(y, deck.p2);
+                    
+                    // Is collision happening?
+                    const sx = x2 - x1; // Vector to end of deck (from start)
+                    const sy = y2 - y1;
+                    const cx = dx - x1; // Vector to centre of disc (from start of deck)
+                    const cy = dy - y1;
+                    const a = sx * sx + sy * sy;
+                    const b = -2.0 * (cx * sx + cy * sy);
+                    const c = cx * cx + cy * cy - r * r;
+                    const D = b * b - 4.0 * a * c;
+                    if (D <= 0.0) {
+                        continue;   // No Real solutions to intersection.
+                    }
+                    const rootD = Math.sqrt(D);
+                    let t1 = (-b - rootD) / (2.0 * a);
+                    let t2 = (-b + rootD) / (2.0 * a);
+                    if ((t1 <= 0.0 && t2 <= 0.0) || (t1 >= 1.0 && t2 >= 0.0)) {
+                        continue;   // Intersections are both before or after deck.
+                    }
+                    t1 = Math.max(t1, 0.0);
+                    t2 = Math.min(t2, 1.0);
+
+                    // Compute collision acceleration.
+                    // Acceleration is proportional to area 'shadowed' in the disc by the intersecting deck.
+                    // This is so that as a disc moves between two deck segments, the acceleration remains constant.
+                    const t1x = (1 - t1) * x1 + t1 * x2 - dx;   // Circle centre -> t1 intersection.
+                    const t1y = (1 - t1) * y1 + t1 * y2 - dy;
+                    const t2x = (1 - t2) * x1 + t2 * x2 - dx;   // Circle centre -> t2 intersection.
+                    const t2y = (1 - t2) * y1 + t2 * y2 - dy;
+                    const ta = Math.abs(Math.atan2(t1y, t1x) - Math.atan2(t2y, t2x)) % Math.PI;
+                    const area = 0.5 * r * r * ta - 0.5 * Math.abs(t1x * t2y - t1y * t2x);
+                    const at = 1000.0 * area / r;   // Have area, want depth, so divide by radius.
+                    let nx = cx + sx * (b / (2.0 * a));
+                    let ny = cy + sy * (b / (2.0 * a));
+                    const l = Math.sqrt(nx * nx + ny * ny);
+                    nx /= l;
+                    ny /= l;
+
+                    // TODO: Use force, not acceleration, so lighter discs apply less force
+                    // Want to keep contact time proportional to velocity.
+                    // Can we just scale acceleration based on relative mass?
+                    // TODO: yes, scale acceleration so sum remains same, but share to pin depends on pin's mass.
+
+                    // TODO: damping force
+
+                    // compute friction acceleration
+                    // Apply accelerations to the disc.
+                    addvx(dydt, disc.p, nx * at);
+                    addvy(dydt, disc.p, ny * at);
+                    // apply accleration distributed to pins
+                    const t = (t1 + t2) * 0.5;
+                    addvx(dydt, deck.p1, -nx * at * (1.0 - t));
+                    addvy(dydt, deck.p1, -ny * at * (1.0 - t));
+                    addvx(dydt, deck.p2, -nx * at * t);
+                    addvy(dydt, deck.p2, -ny * at * t);
                 }
             }
         }
