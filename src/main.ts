@@ -53,6 +53,71 @@ const scene: Scene = {
                 E: 20000000.0,
                 style: "black",
                 density: 1200.0,
+                friction: 0.9,
+            },
+        ],
+    },
+    terrain: {
+        hmap: [
+            40.0,
+            16.0,
+            14.0,
+            12.0,
+            10.0,
+            8.0,
+            6.0,
+            5.0,
+            4.0,
+            4.0,
+            40.0,
+        ],
+        style: "darkgrey",
+        pitch: 10.0,
+        friction: 0.5,
+    },
+    height: 100.0,
+    g: [0.0, -9.8],
+};
+*/
+/*
+//             0
+//
+// 6 - 1 - 2 - 3 - 4 - 5 - 7
+const w = 1;
+const scene: Scene = {
+    truss: {
+        pins: [
+            [40.0, 40.0],
+            [25.0, 27.5],
+            [30.0, 25.0],
+            [35.0, 22.5],
+            [40.0, 20.0],
+            [45.0, 22.5],
+            [50.0, 25.0],
+            [55.0, 27.5],
+            [20.0, 30.0],
+            [60.0, 30.0],
+        ],
+        mobilePins: 8,
+        beams: [
+            { p1: 8, p2: 1, m: 0, w: w, deck: true },
+            { p1: 1, p2: 2, m: 0, w: w, deck: true },
+            { p1: 2, p2: 3, m: 0, w: w, deck: true },
+            { p1: 3, p2: 4, m: 0, w: w, deck: true },
+            { p1: 4, p2: 5, m: 0, w: w, deck: true },
+            { p1: 5, p2: 6, m: 0, w: w, deck: true },
+            { p1: 6, p2: 7, m: 0, w: w, deck: true },
+            { p1: 7, p2: 9, m: 0, w: w, deck: true },
+        ],
+        discs: [
+            { p: 0, r: 2.5, m: 0 },
+        ],
+        materials: [
+            {   // Rubber.
+                E: 20000000.0,
+                style: "black",
+                density: 1200.0,
+                friction: 0.9,
             },
         ],
     },
@@ -81,40 +146,28 @@ const scene: Scene = {
 
 //             0
 //
-// 6 - 1 - 2 - 3 - 4 - 5 - 7
+// 1 ---------------------- 2
+const w = 1;
 const scene: Scene = {
     truss: {
         pins: [
             [40.0, 40.0],
-            [25.0, 27.5],
-            [30.0, 25.0],
-            [35.0, 22.5],
-            [40.0, 20.0],
-            [45.0, 22.5],
-            [50.0, 25.0],
-            [55.0, 27.5],
             [20.0, 30.0],
-            [60.0, 30.0],
+            [60.0, 25.0],
         ],
-        mobilePins: 8,
+        mobilePins: 1,
         beams: [
-            { p1: 8, p2: 1, m: 0, w: 1.0, deck: true },
-            { p1: 1, p2: 2, m: 0, w: 1.0, deck: true },
-            { p1: 2, p2: 3, m: 0, w: 1.0, deck: true },
-            { p1: 3, p2: 4, m: 0, w: 1.0, deck: true },
-            { p1: 4, p2: 5, m: 0, w: 1.0, deck: true },
-            { p1: 5, p2: 6, m: 0, w: 1.0, deck: true },
-            { p1: 6, p2: 7, m: 0, w: 1.0, deck: true },
-            { p1: 7, p2: 9, m: 0, w: 1.0, deck: true },
+            { p1: 1, p2: 2, m: 0, w: w, deck: true },
         ],
         discs: [
-            { p: 0, r: 2.5, m: 0 },
+            { p: 0, r: 2.5, m: 0, v: -1.0 },
         ],
         materials: [
             {   // Rubber.
                 E: 20000000.0,
                 style: "black",
                 density: 1200.0,
+                friction: 0.9,
             },
         ],
     },
@@ -195,10 +248,8 @@ gesture.addGestureHandler(new PinchZoomGesture(vp));
 // https://developer.mozilla.org/en-US/docs/Web/API/Fullscreen_API/Guide
 // Look into this
 
-// TODO: discs. Attached to pins, repel terrain at a distance (with friction)
+// TODO: discs have friction
 // TODO: discs can rotate at a fixed rate. Rotation only applies to friction force calculation.
-
-// TODO: deck beams. Like regular beams, but repel discs
 
 // TODO: rewrite viewport etc. to not take callbacks, just call into it to explcitly set up canvas, etc.
 
@@ -206,6 +257,11 @@ gesture.addGestureHandler(new PinchZoomGesture(vp));
 
 // TODO: Air resistance, or at least damping of pin movement, not just beam spring forces. Keep beam damping, this should be independent.
 
+// TODO: Beams fail after some stress.
+
+// TODO: Work hardening.
+
 // TODO: Beam buckling.
+
 
 console.log("stuff loaded");

@@ -27,13 +27,14 @@ export type Disc = {
     p: number;  // Index of moveable pin this disc surrounds.
     m: number;  // Material of disc.
     r: number;  // Radius of disc.
+    v: number;  // Velocity of surface of disc (in CCW direction).
 };
 
 export type Material = {
     E: number;  // Young's modulus in Pa.
     density: number;    // kg/m^3
     style: string | CanvasGradient | CanvasPattern;
-    
+    friction: number;
     // TODO: when stuff breaks
 };
 
@@ -143,7 +144,7 @@ export function sceneMethod(scene: Scene): ODEMethod {
         if (pin < mobilePins) {
             return mass[pin];
         } else {
-            return 0.0;
+            return 5.972e24;    // Mass of the Earth.
         }
     }
 
@@ -211,7 +212,7 @@ export function sceneMethod(scene: Scene): ODEMethod {
         h.decks[h.deckCount] = d;
         h.deckCount++;
     }
-    const friction = scene.terrain.friction;
+    const tFriction = scene.terrain.friction;
 
     // Set up initial ODE state vector.
     const y0 = new Float32Array(mobilePins * 4);
@@ -267,6 +268,7 @@ export function sceneMethod(scene: Scene): ODEMethod {
             const vx = getvx(y, p2) - getvx(y, p1); // Velocity of p2 relative to p1.
             const vy = getvy(y, p2) - getvy(y, p1);
             const v = vx * ux + vy * uy;    // Velocity of p2 relative to p1 in direction of beam.
+            // TODO: now that getm returns mass of Earth for fixed pins, we don't need these different if clauses.
             if (p1 < mobilePins && p2 < mobilePins) {
                 const dampF = v * zeta * Math.sqrt(k * m1 * m2 / (m1 + m2));
                 addvx(dydt, p1, ux * dampF / m1);
@@ -317,18 +319,13 @@ export function sceneMethod(scene: Scene): ODEMethod {
                 // Friction.
                 // Apply acceleration in proportion to at, in direction opposite of tangent projected velocity.
                 // Cap acceleration by some fraction of velocity
+                // TODO: take friction from beams too (just average beams going into pin?)
                 const tx = ny;
                 const ty = -nx;
                 const tv = getvx(y, i) * tx + getvy(y, i) * ty;
-                if (tv >= 0.0) {
-                    const af = -Math.min(friction * at, tv * 100);
-                    addvx(dydt, i, tx * af);
-                    addvy(dydt, i, ty * af);
-                } else {
-                    const af = Math.min(friction * at, -tv * 100);
-                    addvx(dydt, i, tx * af);
-                    addvy(dydt, i, ty * af);
-                }
+                const af = Math.min(tFriction * at, Math.abs(tv * 100)) * (tv >= 0.0 ? -1.0 : 1.0);
+                addvx(dydt, i, tx * af);
+                addvy(dydt, i, ty * af);
             }
         }
         // Acceleration due to disc-deck collision.
@@ -384,28 +381,47 @@ export function sceneMethod(scene: Scene): ODEMethod {
                     const t2y = (1 - t2) * y1 + t2 * y2 - dy;
                     const ta = Math.abs(Math.atan2(t1y, t1x) - Math.atan2(t2y, t2x)) % Math.PI;
                     const area = 0.5 * r * r * ta - 0.5 * Math.abs(t1x * t2y - t1y * t2x);
-                    const at = 1000.0 * area;   // TODO: figure out what acceleration to use
+                    const an = 1000.0 * area;   // TODO: figure out what acceleration to use
                     let nx = cx - sx * t;
                     let ny = cy - sy * t;
                     const l = Math.sqrt(nx * nx + ny * ny);
                     nx /= l;
                     ny /= l;
 
-                    // TODO: damping force
-
-                    // compute friction acceleration
                     // Apply accelerations to the disc.
                     const md = getm(disc.p);
                     const m1 = getm(deck.p1) * (1.0 - t);
                     const m2 = getm(deck.p2) * t;
-                    const mTotal = md + m1 + m2;
-                    addvx(dydt, disc.p, nx * at * (mTotal - md) / mTotal);
-                    addvy(dydt, disc.p, ny * at * (mTotal - md) / mTotal);
+                    const ad = (m1 + m2) / (md + m1 + m2);  // Share of acceleration for disc, deck endpoints.
+                    const a1 = (md + m2) / (md + m1 + m2) * (1.0 - t);
+                    const a2 = (md + m1) / (md + m1 + m2) * t;
+                    addvx(dydt, disc.p, nx * an * ad);
+                    addvy(dydt, disc.p, ny * an * ad);
                     // apply accleration distributed to pins
-                    addvx(dydt, deck.p1, -nx * at * (1.0 - t) * (mTotal - m1) / mTotal);
-                    addvy(dydt, deck.p1, -ny * at * (1.0 - t) * (mTotal - m1) / mTotal);
-                    addvx(dydt, deck.p2, -nx * at * t * (mTotal - m2) / mTotal);
-                    addvy(dydt, deck.p2, -ny * at * t * (mTotal - m2) / mTotal);
+                    addvx(dydt, deck.p1, -nx * an * a1);
+                    addvy(dydt, deck.p1, -ny * an * a1);
+                    addvx(dydt, deck.p2, -nx * an * a2);
+                    addvy(dydt, deck.p2, -ny * an * a2);
+
+                    // Compute friction and damping.
+                    // Get relative velocity.
+                    const vx = getvx(y, disc.p) - (1.0 - t) * getvx(y, deck.p1) - t * getvx(y, deck.p2);
+                    const vy = getvy(y, disc.p) - (1.0 - t) * getvy(y, deck.p1) - t * getvy(y, deck.p2);
+                    const vn = vx * nx + vy * ny;
+                    const tx = ny;
+                    const ty = -nx;
+                    const vt = vx * tx + vy * ty - disc.v;
+                    // Totally unscientific way to compute friction from arbitrary constants.
+                    const friction = Math.sqrt(materials[disc.m].friction * materials[deck.m].friction);
+                    const af = Math.min(an * friction, Math.abs(vt * 100)) * (vt <= 0.0 ? 1.0 : -1.0);
+                    const damp = 2;   // TODO: figure out how to derive a reasonable constant.
+                    addvx(dydt, disc.p, tx * af * ad - vn * nx * damp);
+                    addvy(dydt, disc.p, ty * af * ad - vn * ny * damp);
+                    // apply accleration distributed to pins
+                    addvx(dydt, deck.p1, -tx * af * a1 + vn * nx * damp);
+                    addvy(dydt, deck.p1, -ty * af * a1 + vn * ny * damp);
+                    addvx(dydt, deck.p2, -tx * af * a2 + vn * nx * damp);
+                    addvy(dydt, deck.p2, -ty * af * a2 + vn * ny * damp);
                 }
             }
         }
