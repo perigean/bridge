@@ -79,21 +79,36 @@ const scene: Scene = {
 };
 */
 
+//             0
+//
+// 6 - 1 - 2 - 3 - 4 - 5 - 7
 const scene: Scene = {
     truss: {
         pins: [
             [40.0, 40.0],
-            [30.0, 30.0],
+            [25.0, 27.5],
+            [30.0, 25.0],
+            [35.0, 22.5],
+            [40.0, 20.0],
+            [45.0, 22.5],
             [50.0, 25.0],
-            [70.0, 30.0],
+            [55.0, 27.5],
+            [20.0, 30.0],
+            [60.0, 30.0],
         ],
-        mobilePins: 1,
+        mobilePins: 8,
         beams: [
-            { p1: 1, p2: 2, m: 0, w: 0.1, deck: true },
-            { p1: 2, p2: 3, m: 0, w: 0.1, deck: true },
+            { p1: 8, p2: 1, m: 0, w: 1.0, deck: true },
+            { p1: 1, p2: 2, m: 0, w: 1.0, deck: true },
+            { p1: 2, p2: 3, m: 0, w: 1.0, deck: true },
+            { p1: 3, p2: 4, m: 0, w: 1.0, deck: true },
+            { p1: 4, p2: 5, m: 0, w: 1.0, deck: true },
+            { p1: 5, p2: 6, m: 0, w: 1.0, deck: true },
+            { p1: 6, p2: 7, m: 0, w: 1.0, deck: true },
+            { p1: 7, p2: 9, m: 0, w: 1.0, deck: true },
         ],
         discs: [
-            { p: 0, r: 2.5, friction: 0.5},
+            { p: 0, r: 2.5, m: 0 },
         ],
         materials: [
             {   // Rubber.

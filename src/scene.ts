@@ -25,8 +25,8 @@ type SimulationBeam = {
 
 export type Disc = {
     p: number;  // Index of moveable pin this disc surrounds.
+    m: number;  // Material of disc.
     r: number;  // Radius of disc.
-    friction: number;   // Coefficient of friction (multiplied with contact material coefficient)
 };
 
 export type Material = {
@@ -143,7 +143,7 @@ export function sceneMethod(scene: Scene): ODEMethod {
         if (pin < mobilePins) {
             return mass[pin];
         } else {
-            return -1.0;
+            return 0.0;
         }
     }
 
@@ -160,6 +160,22 @@ export function sceneMethod(scene: Scene): ODEMethod {
         }
         return { p1, p2, m: beam.m, w: beam.w, l: beam.l || l, deck: beam.deck || false };
     });
+
+    // Disc mass.
+    const discs = scene.truss.discs;
+    for (const disc of discs) {
+        if (disc.p >= mobilePins) {
+            throw new Error("Disc attached to non mobile pin");
+        }
+        mass[disc.p] += disc.r * disc.r * Math.PI * materials[disc.p].density;
+    }
+
+    // Check that everything that can move has some mass.
+    for (let i = 0; i < mobilePins; i++) {
+        if (mass[i] <= 0.0) {
+            throw new Error(`Mobile pin ${i} has mass ${mass[i]} <= 0.0`);
+        }
+    }
 
     const pitch = scene.terrain.pitch;
     const hmap: SimulationHMap = scene.terrain.hmap.map((h, i) => {
@@ -196,7 +212,6 @@ export function sceneMethod(scene: Scene): ODEMethod {
         h.deckCount++;
     }
     const friction = scene.terrain.friction;
-    const discs = scene.truss.discs;
 
     // Set up initial ODE state vector.
     const y0 = new Float32Array(mobilePins * 4);
@@ -316,9 +331,7 @@ export function sceneMethod(scene: Scene): ODEMethod {
                 }
             }
         }
-        // TODO: Acceleration due to disc-terrain collision.
-
-        // TODO: Acceleration due to disc-deck collision.
+        // Acceleration due to disc-deck collision.
         for (const disc of discs) {
             const r = disc.r;
             const dx = getdx(y, disc.p);
@@ -353,6 +366,7 @@ export function sceneMethod(scene: Scene): ODEMethod {
                         continue;   // No Real solutions to intersection.
                     }
                     const rootD = Math.sqrt(D);
+                    const t = -b / (2.0 * a);
                     let t1 = (-b - rootD) / (2.0 * a);
                     let t2 = (-b + rootD) / (2.0 * a);
                     if ((t1 <= 0.0 && t2 <= 0.0) || (t1 >= 1.0 && t2 >= 0.0)) {
@@ -370,30 +384,28 @@ export function sceneMethod(scene: Scene): ODEMethod {
                     const t2y = (1 - t2) * y1 + t2 * y2 - dy;
                     const ta = Math.abs(Math.atan2(t1y, t1x) - Math.atan2(t2y, t2x)) % Math.PI;
                     const area = 0.5 * r * r * ta - 0.5 * Math.abs(t1x * t2y - t1y * t2x);
-                    const at = 1000.0 * area / r;   // Have area, want depth, so divide by radius.
-                    let nx = cx + sx * (b / (2.0 * a));
-                    let ny = cy + sy * (b / (2.0 * a));
+                    const at = 1000.0 * area;   // TODO: figure out what acceleration to use
+                    let nx = cx - sx * t;
+                    let ny = cy - sy * t;
                     const l = Math.sqrt(nx * nx + ny * ny);
                     nx /= l;
                     ny /= l;
-
-                    // TODO: Use force, not acceleration, so lighter discs apply less force
-                    // Want to keep contact time proportional to velocity.
-                    // Can we just scale acceleration based on relative mass?
-                    // TODO: yes, scale acceleration so sum remains same, but share to pin depends on pin's mass.
 
                     // TODO: damping force
 
                     // compute friction acceleration
                     // Apply accelerations to the disc.
-                    addvx(dydt, disc.p, nx * at);
-                    addvy(dydt, disc.p, ny * at);
+                    const md = getm(disc.p);
+                    const m1 = getm(deck.p1) * (1.0 - t);
+                    const m2 = getm(deck.p2) * t;
+                    const mTotal = md + m1 + m2;
+                    addvx(dydt, disc.p, nx * at * (mTotal - md) / mTotal);
+                    addvy(dydt, disc.p, ny * at * (mTotal - md) / mTotal);
                     // apply accleration distributed to pins
-                    const t = (t1 + t2) * 0.5;
-                    addvx(dydt, deck.p1, -nx * at * (1.0 - t));
-                    addvy(dydt, deck.p1, -ny * at * (1.0 - t));
-                    addvx(dydt, deck.p2, -nx * at * t);
-                    addvy(dydt, deck.p2, -ny * at * t);
+                    addvx(dydt, deck.p1, -nx * at * (1.0 - t) * (mTotal - m1) / mTotal);
+                    addvy(dydt, deck.p1, -ny * at * (1.0 - t) * (mTotal - m1) / mTotal);
+                    addvx(dydt, deck.p2, -nx * at * t * (mTotal - m2) / mTotal);
+                    addvy(dydt, deck.p2, -ny * at * t * (mTotal - m2) / mTotal);
                 }
             }
         }
@@ -444,6 +456,7 @@ export function sceneRenderer(scene: Scene): TrussRender {
         // Beams.
         for (const beam of beams) {
             ctx.strokeStyle = materials[beam.m].style;
+            ctx.lineCap = "round";
             ctx.lineWidth = beam.w;
             ctx.beginPath();
             const p1 = beam.p1;
