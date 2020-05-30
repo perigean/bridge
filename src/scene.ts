@@ -168,7 +168,7 @@ export function sceneMethod(scene: Scene): ODEMethod {
         if (disc.p >= mobilePins) {
             throw new Error("Disc attached to non mobile pin");
         }
-        mass[disc.p] += disc.r * disc.r * Math.PI * materials[disc.p].density;
+        mass[disc.p] += disc.r * disc.r * Math.PI * materials[disc.m].density;
     }
 
     // Check that everything that can move has some mass.
@@ -461,13 +461,14 @@ export function sceneRenderer(scene: Scene): TrussRender {
 
         // Discs
         const discs = truss.discs;
-        ctx.beginPath();
+        
         ctx.fillStyle = "red";
         for (const disc of discs) {
             const p = disc.p;
+            ctx.beginPath();
             ctx.arc(y[p * 2 + 0], y[p * 2 + 1], disc.r, 0.0, 2 * Math.PI);
+            ctx.fill("nonzero");
         }
-        ctx.fill("nonzero");
 
         // Beams.
         for (const beam of beams) {
