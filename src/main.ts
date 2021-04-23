@@ -13,6 +13,8 @@ new RootLayout(
     ),
 );
 
+// TODO: Test credentials.
+
 /*
 import { Viewport, ViewportPosition, PanGesture, PinchZoomGesture } from "./viewport.js"
 import { TouchDemux } from "./touch.js"
