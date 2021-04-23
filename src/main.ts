@@ -1,5 +1,19 @@
 // Copyright Charles Dueck 2020
 
+
+import { DebugTouch, Left, VCenter, RootLayout } from "./ui/node.js"
+
+const canvas = document.getElementById("canvas");
+new RootLayout(
+    canvas as HTMLCanvasElement,
+    Left(
+        VCenter(DebugTouch(256, 256, "pink", "red")),
+        VCenter(DebugTouch(192, 384, "lightgreen", "green")),
+        VCenter(DebugTouch(384, 192, "lightblue", "blue")),
+    ),
+);
+
+/*
 import { Viewport, ViewportPosition, PanGesture, PinchZoomGesture } from "./viewport.js"
 import { TouchDemux } from "./touch.js"
 import { Gestures} from "./gesture.js"
@@ -160,6 +174,8 @@ const gesture = new Gestures();
 touch.addTouchHandler(gesture);
 gesture.addGestureHandler(new PanGesture(vp));
 gesture.addGestureHandler(new PinchZoomGesture(vp));
+*/
+
 
 // TODO: mouse and trackpad input
 // scroll
