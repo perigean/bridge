@@ -7,9 +7,9 @@ const canvas = document.getElementById("canvas");
 new RootLayout(
     canvas as HTMLCanvasElement,
     Left(
-        VCenter(DebugTouch(256, 256, "pink", "red")),
-        VCenter(DebugTouch(192, 384, "lightgreen", "green")),
         VCenter(DebugTouch(384, 192, "lightblue", "blue")),
+        VCenter(DebugTouch(192, 384, "lightgreen", "green")),
+        VCenter(DebugTouch(256, 256, "pink", "red")),
     ),
 );
 
