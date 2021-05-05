@@ -11,7 +11,7 @@
 //   * tap fires when on last touch end (or touch converted to pan), unless no taps remain (all converted to pan)
 //   * new active tap can start while old one is running but nolonger active
 // * all pans get put into a single pan tracker
-
+/*
 import { Point2D, pointDistance, pointEquals } from "../point.js"
 import { TouchDemux, TouchHandler } from "./touch.js"
 
@@ -163,3 +163,4 @@ export class Gesture implements TouchHandler {
 };
 
 // TODO: better separation between IDs on touch events, and the internal IDs passed to handler.
+*/
