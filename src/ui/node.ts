@@ -19,6 +19,8 @@ export interface ElementContext {
 
 type OnAttachHandler = (ec: ElementContext) => void;
 type OnDrawHandler = (ctx: CanvasRenderingContext2D, box: LayoutBox, ec: ElementContext, vp: LayoutBox) => void;
+
+
 type OnTouchBeginHandler = (id: number, p: Point2D, ec: ElementContext) => void;
 type TouchMove = {
     readonly id: number;
@@ -40,6 +42,7 @@ type OnPanHandler = (ps: Array<PanPoint>, ec: ElementContext) => void;
 class TouchGesture {
     onTapHandler?: OnTapHandler;
     onPanHandler?: OnPanHandler;
+    // TODO: onPanStartHandler, onPanEndHandler?
 
     private active: Map<number, Point2D>;
     private pans: Map<number, PanPoint>;
@@ -98,6 +101,30 @@ interface StaticArray<T> {
 
 type ChildConstraint<LayoutType extends string> = Element<LayoutType, any> | StaticArray<Element<LayoutType, any>> | undefined;
 
+function initTouchGesture(e: Element<any, any>): TouchGesture {
+    if (e.touchGesture !== undefined) {
+        return e.touchGesture;
+    }
+    if (e.onTouchBeginHandler !== undefined || e.onTouchMoveHandler !== undefined || e.onTouchEndHandler !== undefined) {
+        throw new Error('Touch gestures already captured');
+    }
+    const tg = new TouchGesture();
+    e.onTouchBeginHandler = tg.onTouchBeginHandler;
+    e.onTouchMoveHandler = tg.onTouchMoveHandler;
+    e.onTouchEndHandler = tg.onTouchEndHandler;
+    return tg;
+}
+
+function clamp(x: number, min: number, max: number): number {
+    if (x < min) {
+        return min;
+    } else if (x > max) {
+        return max;
+    } else {
+        return x;
+    }
+}
+
 class Element<LayoutType extends string, Child extends ChildConstraint<string>> {
     layoutType: LayoutType;
     child: Child;
@@ -130,13 +157,7 @@ class Element<LayoutType extends string, Child extends ChildConstraint<string>> 
 
     touchGesture?: TouchGesture;
     onTap(handler: OnTapHandler): this {
-        if (this.touchGesture === undefined) {
-            const tc = new TouchGesture();
-            this.touchGesture = tc;
-            this.onTouchBeginHandler = tc.onTouchBeginHandler;
-            this.onTouchMoveHandler = tc.onTouchMoveHandler;
-            this.onTouchEndHandler = tc.onTouchEndHandler;
-        }
+        this.touchGesture = initTouchGesture(this);
         if (this.touchGesture.onTapHandler !== undefined) {
             throw new Error('onTap already set');
         }
@@ -144,9 +165,7 @@ class Element<LayoutType extends string, Child extends ChildConstraint<string>> 
         return this;
     }
     onPan(handler: OnPanHandler): this {
-        if (this.touchGesture === undefined) {
-            this.touchGesture = new TouchGesture();
-        }
+        this.touchGesture = initTouchGesture(this);
         if (this.touchGesture.onPanHandler !== undefined) {
             throw new Error('onPan already set');
         }
@@ -285,6 +304,7 @@ class Debouncer {
     clear() {
         if (this.timeout !== undefined) {
             clearTimeout(this.timeout);
+            this.timeout = undefined;
         }
     }
 };
@@ -293,7 +313,6 @@ function findTouchTarget(root: Element<any, any>, p: Point2D): undefined | HasTo
     const stack = [root];
     const x = p[0];
     const y = p[1];
-    let target: undefined | HasTouchHandlers = undefined;
     while (stack.length > 0) {
         const e = stack.pop() as Element<any, any>;
         if (x < e.left || x >= e.left + e.width || y < e.top || y >= e.top + e.height) {
@@ -301,7 +320,7 @@ function findTouchTarget(root: Element<any, any>, p: Point2D): undefined | HasTo
             continue;
         }
         if (e.onTouchBeginHandler !== undefined && e.onTouchMoveHandler !== undefined && e.onTouchEndHandler !== undefined) {
-            target = e as HasTouchHandlers; // TODO: Why can't type inference figure this out?
+            return e as HasTouchHandlers; // TODO: Why can't type inference figure this out?
         }
         if (e.child === undefined) {
             // No children, so no more work to do.
@@ -313,78 +332,8 @@ function findTouchTarget(root: Element<any, any>, p: Point2D): undefined | HasTo
             stack.push(e.child);
         }
     }
-    return target;
+    return undefined;
 }
-
-/*
-class TouchForward {
-    private root: Element<any, any>;
-    private targets: Map<number, HasTouchHandlers>;
-    private defaultBegin?: OnTouchBeginHandler;
-    private defaultMove?: OnTouchMoveHandler;
-    private defaultEnd?: OnTouchEndHandler;
-    
-    // TODO: This has to be updated 
-    private p2c: Affine2D;
-
-    readonly onTouchBeginHandler: OnTouchBeginHandler;
-    readonly onTouchMoveHandler: OnTouchMoveHandler;
-    readonly onTouchEndHandler: OnTouchEndHandler;
-
-    constructor(root: Element<any, any>, p2c: Affine2D) {
-        this.root = root;
-        this.targets = new Map();
-        this.p2c = p2c;
-
-        this.onTouchBeginHandler = (id: number, p: Point2D, ec: ElementContext) => {
-            if (this.targets.has(id)) {
-                throw new Error(`Touch begin for existing ID ${id}`);
-            }
-            const target = findTouchTarget(this.root, p);
-            if (target !== undefined) {
-                this.targets.set(id, target);
-                const cp = transformPoint(this.p2c, p);
-                target.onTouchBeginHandler(id, cp, ec);
-            } else if (this.defaultBegin !== undefined) {
-                this.defaultBegin(id, p, ec);
-            }
-        };
-        this.onTouchMoveHandler = (ts: Array<TouchMove>, ec: ElementContext) => {
-            const ttsMap = new Map<number, Array<TouchMove>>();
-            for (const t of ts) {
-                const ct = {
-                    id: t.id,
-                    p: transformPoint(this.p2c, t.p),
-                }
-                const existing = ttsMap.get(t.id);
-                if (existing !== undefined) {
-                    existing.push(ct);
-                } else {
-                    ttsMap.set(t.id, [ct]);
-                }
-            }
-            for (const [id, tts] of ttsMap) {
-                const target = this.targets.get(id);
-                if (target !== undefined) {
-                    target.onTouchMoveHandler(tts, ec);
-                } else if (this.defaultMove !== undefined) {
-                    // TODO: this needs to be called before we transform the points.
-                    this.defaultMove(ts, ec);
-                }
-            }
-        };
-        this.onTouchEndHandler = (id: number, ec: ElementContext) => {
-            const target = this.targets.get(id);
-            this.targets.delete(id);
-            if (target !== undefined) {
-                target.onTouchEndHandler(id, ec);
-            } else if (this.defaultEnd !== undefined) {
-                this.defaultEnd(id, ec);
-            }
-        };
-    }
-};
-*/
 
 export class RootLayout implements ElementContext {
     child: WPHPLayout<any>;
@@ -552,32 +501,31 @@ export class RootLayout implements ElementContext {
     // TODO: add TouchForwarder here. install touch handlers
 };
 
-// TODO: make som WPHPLayout that positions all children with absolute coordinates.
-// Probably needs a new child type that includes left, top.
 // TODO: Make it pan (have a provided size)
 // TODO: Have acceleration structures. (so hide children, and forward tap/pan/draw manually, with transform)
 // TODO: Make it zoom
 // TODO: maybe have two elements? a viewport and a HSWS with absolutely positioned children and acceleration structures
-/*
+
 class ScrollLayout extends WPHPLayout<undefined> {
     // ScrollLayout has to intercept all events to make sure any locations are updated by
     // the scroll position, so child is undefined, and all events are forwarded to scroller.
     scroller: WSHSLayout<any>;
     scrollX: number;
     scrollY: number;
-    // Panning contains a info on the active pans. If value is not null, e is a child of scroller.
-    // If value is null, then it is an existing pan that is captured by this ScrollLayout.
-    panning: Map<number, ScrollerPanning>;
+    private touchTargets: Map<number, HasTouchHandlers>;
+    private touchScroll: Map<number, { prev: Point2D, curr: Point2D }>;
 
     constructor(child: WSHSLayout<any>, scrollX?: number, scrollY?: number) {
         super(undefined);
         this.scroller = child;
         this.scrollX = scrollX || 0;
         this.scrollY = scrollY || 0;
-        this.panning = new Map();
+        this.touchTargets = new Map();
+        this.touchScroll = new Map();
         
         this.onDrawHandler = (ctx: CanvasRenderingContext2D, _box: LayoutBox, ec: ElementContext, _vp: LayoutBox) => {
-            const t = ctx.getTransform();
+            ctx.save();
+            // TODO: clip.
             ctx.translate(-this.scrollX, -this.scrollY);
             const vpScroller = {
                 left: this.scrollX,
@@ -587,88 +535,71 @@ class ScrollLayout extends WPHPLayout<undefined> {
             };
             drawElementTree(ctx, this.scroller, ec, vpScroller);
             // TODO: restore transform in a finally?
-            ctx.setTransform(t);
+            ctx.restore();
         };
 
-        this.onPanHandler = (pan: Pan, ec: ElementContext) => {
-            const targets = new Map<HasPanHandler, Pan>();
-            const scrollerPan = new Array<PanTouch>();
-            for (const p of pan) {
-                const target = this.panning.get(p.id);
-                if (target === undefined) {
-                    // New target, find out who captures it.
-                    // TODO: this transform needs to be for the time of the start.
-                    // Maybe it's OK to just igore the first little move? And base this all on curr?
-                    // No easy way to do it properly. Would need a touch down event, and have the IDs stay constant.
-                    // Then we can keep a map of the transformed touch downs, 
-                    // Wait, we need to do that for touches!
-                    // Wait, wait, we need to convert a tap to a pan if the surface it's on moves!
-                    // How to do that properly?
-                    // Maybe we should be converting from touches to taps and pans at this level? Get rid of gesture and pull the logic into Root and Scroller?
-                    const start: Point2D = [
-                        p.start[0] - this.left + this.scrollX,
-                        p.start[1] - this.top + this.scrollY,
-                    ];
-                    const handler = findEventTarget(this.scroller, start, "onPanHandler");
-                    if (handler === undefined) {
-                        // No child captures, so it will be used to scroll.
-                        this.panning.set(p.id, null);
-                        scrollerPan.push(p);
-                    } else {
-                        this.panning.set(p.id, {
-                            [scrollerPanTouchTarget]: handler,
-                            id: p.id,
-                            start: start,
-                            prev: ,
-                            curr: ,
-                        });
-                    }
-                } else if (target === null) {
-                    // Existing pan, captured by this scroller.
-                    scrollerPan.push(p);
-                } else {
-                    // Existing pan, captures by child.
-                    target.prev = target.curr;
-                    // TODO: use a matrix transform
-                    target.curr = [
-                        p.curr[0] - this.left + this.scrollX,
-                        p.curr[1] - this.top + this.scrollY,
-                    ];
-                    const targetPan = targets.get(target[scrollerPanTouchTarget]) || [];
-                    targetPan.push(target);
-                    targets.set(target[scrollerPanTouchTarget], targetPan);
-                }
+        this.onTouchBeginHandler = (id: number, pp: Point2D, ec: ElementContext) => {
+            const cp: Point2D = [pp[0] + this.scrollX, pp[1] + this.scrollY];
+            const target = findTouchTarget(this.scroller, cp);
+            if (target === undefined) {
+                // Add placeholder null to active touches, so we know they should scroll.
+                this.touchScroll.set(id, { prev: pp, curr: pp });
+            } else {
+                this.touchTargets.set(id, target);
+                target.onTouchBeginHandler(id, cp, ec);
             }
-            
-            // TODO: seperate events that are hitting targets inside scroller
-            // because we need to transform those, but not transform the ones that are actually used for the pan.
-            
-            for (const p of pan) {
-                const pos = this.panningPos.get(p.id);
-                const xAdj = this.scrollX - this.left;
-                const yAdj = this.scrollY - this.top;
-                if (pos === undefined) {
-                    transformedPan.push({
-                        id: p.id,
-                        start: [p.start[0] + xAdj, p.start[1] - yAdj],
-                        prev: [p.prev[0] + xAdj, p.prev[1] - yAdj],
-                        curr: [p.curr[0] + xAdj, p.curr[1] - yAdj],
-                    });
-                } else {
-                    // Existing pan, use start and prev values adjusted when the pan started.
-                    transformedPan.push({
-                        id: p.id,
-                        start: pos.start,
-                        prev: pos.prev,
-                        curr: [p.curr[0] + xAdj, p.curr[1] - yAdj],
-                    });
-                }
-                
-            }
-            const targets = findPanTargets(this.scroller, )
-            // TODO: how to make sure the pan points that land on this are not transformed?
-            
         };
+        this.onTouchMoveHandler = (ts: Array<TouchMove>, ec: ElementContext) => {
+            const targets = new Map<HasTouchHandlers, Array<TouchMove>>();
+            for (const t of ts) {
+                const target = this.touchTargets.get(t.id);
+                const scroll = this.touchScroll.get(t.id);
+                if (target !== undefined) {
+                    const tts = targets.get(target) || [];
+                    tts.push(t);
+                    targets.set(target, tts);
+                } else if (scroll !== undefined) {
+                    scroll.prev = scroll.curr;
+                    scroll.curr = t.p;
+                } else {
+                    throw new Error(`Unknown touch move ID ${t.id}`);
+                }
+            }
+
+            // Update scroll position.
+            let dx = 0;
+            let dy = 0;
+            for (const s of this.touchScroll.values()) {
+                dx += s.prev[0] - s.curr[0];
+                dy += s.prev[1] - s.curr[1];
+            }
+            this.scrollX = clamp(this.scrollX + dx, 0, this.scroller.width - this.width);
+            this.scrollY = clamp(this.scrollY + dy, 0, this.scroller.height - this.height);
+
+            // Forward touch moves.
+            for (const [target, tts] of targets) {
+                for (let i = 0; i < tts.length; i++) {
+                    tts[i] = {
+                        id: tts[i].id,
+                        p: [tts[i].p[0] + this.scrollX, tts[i].p[1] + this.scrollY],
+                    };
+                }
+                target.onTouchMoveHandler(tts, ec);
+            }
+            ec.requestDraw();
+        };
+        this.onTouchEndHandler = (id: number, ec: ElementContext) => {
+            const target = this.touchTargets.get(id);
+            if (target !== undefined) {
+                this.touchTargets.delete(id);
+                if (target.onTouchEndHandler !== undefined) {
+                    target.onTouchEndHandler(id, ec);
+                }
+            } else if (!this.touchScroll.delete(id)) {
+                throw new Error(`Unknown touch end ID ${id}`);
+            }
+        };
+        // TODO: other handlers need forwarding.
     }
 
     layout(left: number, top: number, width: number, height: number): void {
@@ -684,7 +615,7 @@ class ScrollLayout extends WPHPLayout<undefined> {
 export function Scroll(child: WSHSLayout<any>, scrollx?: number, scrolly?: number): ScrollLayout {
     return new ScrollLayout(child, scrollx, scrolly);
 }
-*/
+
 // TODO: scrollx, scrolly
 
 class BoxLayout extends WSHSLayout<undefined> {
@@ -699,8 +630,42 @@ class BoxLayout extends WSHSLayout<undefined> {
     }
 };
 
-export function Box(width: number, height: number) : BoxLayout {
+class BoxWithChildLayout extends WSHSLayout<WPHPLayout<any>> {
+    constructor(width: number, height: number, child:WPHPLayout<any>) {
+        super(child);
+        this.width = width;
+        this.height = height;
+    }
+
+    layout(left: number, top: number): void {
+        this.left = left;
+        this.top = top;
+        this.child.layout(left, top, this.width, this.height);
+    }
+};
+
+export function Box(width: number, height: number, child?: WPHPLayout<any>): WSHSLayout<any> {
+    if (child !== undefined) {
+        return new BoxWithChildLayout(width, height, child);
+    }
     return new BoxLayout(width, height);
+}
+
+class FillLayout extends WPHPLayout<undefined> {
+    constructor() {
+        super(undefined);
+    }
+
+    layout(left: number, top: number, width: number, height: number): void {
+        this.left = left;
+        this.top = top;
+        this.width = width;
+        this.height = height;
+    }
+}
+
+export function Fill(): FillLayout {
+    return new FillLayout();
 }
 
 class CenterLayout extends WPHPLayout<WSHSLayout<any>> {
@@ -969,3 +934,106 @@ export function DebugTouch(width: number, height: number, fill: string | CanvasG
 }
 
 // TODO: Top, Bottom
+
+class LayerLayout extends WPHPLayout<StaticArray<WPHPLayout<any>>> {
+    constructor(children: StaticArray<WPHPLayout<any>>) {
+        super(children);
+    }
+    layout(left: number, top: number, width: number, height: number): void {
+        this.left = left;
+        this.top = top;
+        this.width = width;
+        this.height = height;
+        for (const child of this.child) {
+            child.layout(left, top, width, height);
+        }
+    }
+};
+
+export function Layer(...children: Array<WPHPLayout<any>>): LayerLayout {
+    return new LayerLayout(children);
+}
+
+
+class PositionLayout extends Element<"pos", WPHPLayout<any>> {
+    requestLeft: number;
+    requestTop: number;
+    requestWidth: number;
+    requestHeight: number;
+
+    constructor(left: number, top: number, width: number, height: number, child: WPHPLayout<any>) {
+        super("pos", child);
+        this.requestLeft = left;
+        this.requestTop = top;
+        this.requestWidth = width;
+        this.requestHeight = height;
+    }
+    layout(parent: LayoutBox) {
+        this.width = Math.min(this.requestWidth, parent.width);
+        this.left = clamp(this.requestLeft, parent.left, parent.left + parent.width - this.width);
+        this.height = Math.min(this.requestHeight, parent.height);
+        this.top = clamp(this.requestTop, parent.top, parent.top + parent.height - this.height);
+
+        this.child.layout(this.left, this.top, this.width, this.height);
+    }
+};
+
+// TODO: support statically sized children, 
+export function Position(left: number, top: number, width: number, height: number, child: WPHPLayout<any>) {
+    return new PositionLayout(left, top, width, height, child);
+}
+
+export function Draggable(left: number, top: number, width: number, height: number, child: WPHPLayout<any>) {
+    const layout = new PositionLayout(left, top, width, height, child);
+    return layout.onPan((ps: Array<PanPoint>, ec: ElementContext) => {
+        let dx = 0;
+        let dy = 0;
+        for (const p of ps) {
+            dx += p.curr[0] - p.prev[0];
+            dy += p.curr[1] - p.prev[1];
+        }
+        dx /= ps.length;
+        dy /= ps.length;
+        layout.requestLeft += dx;
+        layout.requestTop += dy;
+        ec.requestLayout();
+    });
+}
+
+
+// TODO: does it make sense to make other layout types?
+// class WSHSRelativeLayout extends WSHSLayout<StaticArray<PositionLayout>> {
+//     constructor(width: number, height: number, children: StaticArray<PositionLayout>) {
+//         super(children);
+//         this.width = width;
+//         this.height = height;
+//     }
+//     layout(left: number, top: number): void {
+//         this.left = left;
+//         this.top = top;
+
+//         for (const child of this.child) {
+//             child.layout(this /* LayoutBox */);
+//         }
+//     }
+// };
+
+class WPHPRelativeLayout extends WPHPLayout<StaticArray<PositionLayout>> {
+    constructor(children: StaticArray<PositionLayout>) {
+        super(children);
+    }
+    layout(left: number, top: number, width: number, height: number): void {
+        this.left = left;
+        this.top = top;
+        this.width = width;
+        this.height = height;
+
+        for (const child of this.child) {
+            child.layout(this /* LayoutBox */);
+        }
+    }
+}
+
+export function Relative(...children: Array<PositionLayout>): WPHPRelativeLayout {
+    return new WPHPRelativeLayout(children);
+}
