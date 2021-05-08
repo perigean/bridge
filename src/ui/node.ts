@@ -17,9 +17,8 @@ export interface ElementContext {
     // TODO: requestRender?
 };
 
-type OnAttachHandler = (ec: ElementContext) => void;
+type StatelessHandler = (ec: ElementContext) => void;
 type OnDrawHandler = (ctx: CanvasRenderingContext2D, box: LayoutBox, ec: ElementContext, vp: LayoutBox) => void;
-
 
 type OnTouchBeginHandler = (id: number, p: Point2D, ec: ElementContext) => void;
 type TouchMove = {
@@ -42,7 +41,8 @@ type OnPanHandler = (ps: Array<PanPoint>, ec: ElementContext) => void;
 class TouchGesture {
     onTapHandler?: OnTapHandler;
     onPanHandler?: OnPanHandler;
-    // TODO: onPanStartHandler, onPanEndHandler?
+    onPanBeginHandler?: StatelessHandler;
+    onPanEndHandler?: StatelessHandler;
 
     private active: Map<number, Point2D>;
     private pans: Map<number, PanPoint>;
@@ -71,6 +71,9 @@ class TouchGesture {
                 }
                 const p = this.pans.get(t.id);
                 if (p !== undefined) {
+                    if (this.pans.size === 0 && this.onPanBeginHandler !== undefined) {
+                        this.onPanBeginHandler(ec);
+                    }
                     this.pans.set(t.id, {
                         prev: p.curr,
                         curr: t.p,
@@ -87,7 +90,9 @@ class TouchGesture {
                 this.onTapHandler(a, ec);
             }
             this.active.delete(id);
-            this.pans.delete(id);
+            if (this.pans.delete(id) && this.pans.size === 0 && this.onPanEndHandler !== undefined) {
+                this.onPanEndHandler(ec);
+            }
         };
     }
 };
@@ -172,9 +177,25 @@ class Element<LayoutType extends string, Child extends ChildConstraint<string>> 
         this.touchGesture.onPanHandler = handler;
         return this;
     }
+    onPanBegin(handler: StatelessHandler): this {
+        this.touchGesture = initTouchGesture(this);
+        if (this.touchGesture.onPanBeginHandler !== undefined) {
+            throw new Error('onPanBegin already set');
+        }
+        this.touchGesture.onPanBeginHandler = handler;
+        return this;
+    }
+    onPanEnd(handler: StatelessHandler): this {
+        this.touchGesture = initTouchGesture(this);
+        if (this.touchGesture.onPanEndHandler !== undefined) {
+            throw new Error('onPanEnd already set');
+        }
+        this.touchGesture.onPanEndHandler = handler;
+        return this;
+    }
 
-    onAttachHandler?: OnAttachHandler;
-    onAttach(handler: OnAttachHandler): this {
+    onAttachHandler?: StatelessHandler;
+    onAttach(handler: StatelessHandler): this {
         if (this.onAttachHandler !== undefined) {
             throw new Error(`onAttach already set`);
         }
@@ -182,8 +203,8 @@ class Element<LayoutType extends string, Child extends ChildConstraint<string>> 
         return this;
     }
 
-    onDetachHandler?: OnAttachHandler;
-    onDetach(handler: OnAttachHandler): this {
+    onDetachHandler?: StatelessHandler;
+    onDetach(handler: StatelessHandler): this {
         if (this.onDetachHandler !== undefined) {
             throw new Error(`onDetach already set`);
         }
@@ -997,6 +1018,12 @@ export function Draggable(left: number, top: number, width: number, height: numb
         layout.requestLeft += dx;
         layout.requestTop += dy;
         ec.requestLayout();
+    }).onPanEnd(() => {
+        // The requested location can be outside the allowed bounds if dragged outside,
+        // but once the drag is over, we want to reset it so that it doesn't start there
+        // once a new drag start.
+        layout.requestLeft = layout.left;
+        layout.requestTop = layout.top;
     });
 }
 
