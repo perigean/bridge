@@ -280,8 +280,6 @@ function callAttachHandlers(root: Element<any, any>, handler: "onAttachHandler" 
 }
 
 function drawElementTree(ctx: CanvasRenderingContext2D, root: Element<any, any>, ec: ElementContext, vp: LayoutBox) {
-    ctx.fillStyle = "white";
-    ctx.fillRect(root.left, root.top, root.width, root.height);
     const stack = [root];
     while (stack.length > 0) {
         const e = stack.pop() as Element<any, any>;
@@ -299,6 +297,12 @@ function drawElementTree(ctx: CanvasRenderingContext2D, root: Element<any, any>,
             stack.push(e.child);
         }
     }
+}
+
+function clearAndDrawElementTree(ctx: CanvasRenderingContext2D, root: Element<any, any>, ec: ElementContext, vp: LayoutBox) {
+    ctx.fillStyle = "white";
+    ctx.fillRect(root.left, root.top, root.width, root.height);
+    drawElementTree(ctx, root, ec, vp);
 }
 
 interface HasTouchHandlers {
@@ -398,7 +402,7 @@ export class RootLayout implements ElementContext {
             this.debounceLayout.clear();
             this.child.layout(0, 0, vp.width, vp.height);
             this.debounceDraw.clear();
-            drawElementTree(ctx, this.child, this /* ElementContext */, vp);
+            clearAndDrawElementTree(ctx, this.child, this /* ElementContext */, vp);
         });
         this.resize.observe(canvas, {box: "device-pixel-content-box"});
         this.vp = {
@@ -415,7 +419,7 @@ export class RootLayout implements ElementContext {
         this.requestLayout = this.debounceLayout.bounce;
 
         this.debounceDraw = new Debouncer(() => {
-            drawElementTree(ctx, this.child, this /* ElementContext */, this.vp);
+            clearAndDrawElementTree(ctx, this.child, this /* ElementContext */, this.vp);
         });
         this.requestDraw = this.debounceDraw.bounce;
 
@@ -522,35 +526,100 @@ export class RootLayout implements ElementContext {
     // TODO: add TouchForwarder here. install touch handlers
 };
 
-// TODO: Make it pan (have a provided size)
 // TODO: Have acceleration structures. (so hide children, and forward tap/pan/draw manually, with transform)
 // TODO: Make it zoom
 // TODO: maybe have two elements? a viewport and a HSWS with absolutely positioned children and acceleration structures
+
+// TODO: convert to use Affine transform.
 
 class ScrollLayout extends WPHPLayout<undefined> {
     // ScrollLayout has to intercept all events to make sure any locations are updated by
     // the scroll position, so child is undefined, and all events are forwarded to scroller.
     scroller: WSHSLayout<any>;
-    scrollX: number;
-    scrollY: number;
+    scroll: Point2D;
+    zoom: number;
+    zoomMax: number;
     private touchTargets: Map<number, HasTouchHandlers>;
     private touchScroll: Map<number, { prev: Point2D, curr: Point2D }>;
 
-    constructor(child: WSHSLayout<any>, scrollX?: number, scrollY?: number) {
+    private updateScroll() {
+        const ts = [...this.touchScroll.values()];
+        if (ts.length === 1) {
+            const t = ts[0];
+            const p = this.p2c(t.prev);
+            const c = this.p2c(t.curr);
+            this.scroll[0] += p[0] - c[0];
+            this.scroll[1] += p[1] - c[1];
+        } else if (ts.length === 2) {
+            const pm = this.p2c([
+                (ts[0].prev[0] + ts[1].prev[0]) * 0.5,
+                (ts[0].prev[1] + ts[1].prev[1]) * 0.5,
+            ]);
+            const pd = pointDistance(ts[0].prev, ts[1].prev);
+            const cd = pointDistance(ts[0].curr, ts[1].curr);
+            this.zoom *= cd / pd;
+            // Clamp zoom so we can't zoom out too far.
+            if (this.scroller.width < this.width / this.zoom) {
+                this.zoom = this.width / this.scroller.width;
+            }
+            if (this.scroller.height < this.height / this.zoom) {
+                this.zoom = this.height / this.scroller.height;
+            }
+            if (this.zoom > this.zoomMax) {
+                this.zoom = this.zoomMax;
+            }
+            const cm = this.p2c([
+                (ts[0].curr[0] + ts[1].curr[0]) * 0.5,
+                (ts[0].curr[1] + ts[1].curr[1]) * 0.5,
+            ]);
+            this.scroll[0] += pm[0] - cm[0];
+            this.scroll[1] += pm[1] - cm[1];
+        }
+        this.scroll[0] = clamp(this.scroll[0], 0, this.scroller.width - this.width / this.zoom);
+        this.scroll[1] = clamp(this.scroll[1], 0, this.scroller.height - this.height / this.zoom);
+    }
+
+    private p2c(p: Point2D): Point2D {
+        const s = this.scroll;
+        const shrink = 1 / this.zoom;
+        // TODO: take parent rect into account
+        return [
+            (p[0] - this.left) * shrink + s[0],
+            (p[1] - this.top) * shrink + s[1],
+        ];
+    }
+
+    // private c2p(childCoord: Point2D): Point2D {
+    //     return pointSub(childCoord, this.scroll);
+    // }
+
+    constructor(child: WSHSLayout<any>, scroll: Point2D, zoom: number, zoomMax: number) {
+        // TODO: min zoom;
         super(undefined);
         this.scroller = child;
-        this.scrollX = scrollX || 0;
-        this.scrollY = scrollY || 0;
+        this.scroll = scroll;
+        this.zoom = zoom;
+        this.zoomMax = zoomMax;
         this.touchTargets = new Map();
         this.touchScroll = new Map();
         
         this.onDrawHandler = (ctx: CanvasRenderingContext2D, _box: LayoutBox, ec: ElementContext, _vp: LayoutBox) => {
             ctx.save();
-            // TODO: clip.
-            ctx.translate(-this.scrollX, -this.scrollY);
+            
+            ctx.translate(this.left, this.top);
+            // Clip to Scroll viewport.
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(this.width, 0);
+            ctx.lineTo(this.width, this.height);
+            ctx.lineTo(0, this.height);
+            ctx.closePath();
+            ctx.clip();
+            ctx.scale(this.zoom, this.zoom);
+            ctx.translate(-this.scroll[0], -this.scroll[1]);
             const vpScroller = {
-                left: this.scrollX,
-                top: this.scrollY,
+                left: this.scroll[0],
+                top: this.scroll[1],
                 width: this.width,
                 height: this.height,
             };
@@ -560,7 +629,7 @@ class ScrollLayout extends WPHPLayout<undefined> {
         };
 
         this.onTouchBeginHandler = (id: number, pp: Point2D, ec: ElementContext) => {
-            const cp: Point2D = [pp[0] + this.scrollX, pp[1] + this.scrollY];
+            const cp = this.p2c(pp);
             const target = findTouchTarget(this.scroller, cp);
             if (target === undefined) {
                 // Add placeholder null to active touches, so we know they should scroll.
@@ -588,21 +657,14 @@ class ScrollLayout extends WPHPLayout<undefined> {
             }
 
             // Update scroll position.
-            let dx = 0;
-            let dy = 0;
-            for (const s of this.touchScroll.values()) {
-                dx += s.prev[0] - s.curr[0];
-                dy += s.prev[1] - s.curr[1];
-            }
-            this.scrollX = clamp(this.scrollX + dx, 0, this.scroller.width - this.width);
-            this.scrollY = clamp(this.scrollY + dy, 0, this.scroller.height - this.height);
+            this.updateScroll();
 
             // Forward touch moves.
             for (const [target, tts] of targets) {
                 for (let i = 0; i < tts.length; i++) {
                     tts[i] = {
                         id: tts[i].id,
-                        p: [tts[i].p[0] + this.scrollX, tts[i].p[1] + this.scrollY],
+                        p: this.p2c(tts[i].p),
                     };
                 }
                 target.onTouchMoveHandler(tts, ec);
@@ -633,8 +695,9 @@ class ScrollLayout extends WPHPLayout<undefined> {
     }
 }
 
-export function Scroll(child: WSHSLayout<any>, scrollx?: number, scrolly?: number): ScrollLayout {
-    return new ScrollLayout(child, scrollx, scrolly);
+export function Scroll(child: WSHSLayout<any>, scroll?: Point2D, zoom?: number, zoomMax?: number): ScrollLayout {
+    // NB: scale of 0 is invalid anyways, so it's OK to be falsy.
+    return new ScrollLayout(child, scroll || [0, 0], zoom || 1, zoomMax || 10);
 }
 
 // TODO: scrollx, scrolly
@@ -670,6 +733,37 @@ export function Box(width: number, height: number, child?: WPHPLayout<any>): WSH
         return new BoxWithChildLayout(width, height, child);
     }
     return new BoxLayout(width, height);
+}
+
+class WPHPBorderLayout extends WPHPLayout<WPHPLayout<any>> {
+    border: number;
+    style: string | CanvasGradient | CanvasPattern;
+    constructor(child: WPHPLayout<any>, border: number, style: string | CanvasGradient | CanvasPattern) {
+        super(child);
+        this.border = border;
+        this.style = style;
+
+        this.onDrawHandler = (ctx: CanvasRenderingContext2D, box: LayoutBox) => {
+            const b = this.border;
+            const b2 = b * 0.5;
+            ctx.strokeStyle = this.style;
+            ctx.lineWidth = this.border;
+            ctx.strokeRect(box.left + b2, box.top + b2, box.width - b, box.height - b);
+        };
+    }
+    layout(left: number, top: number, width: number, height: number): void {
+        this.left = left;
+        this.top = top;
+        this.width = width;
+        this.height = height;
+
+        const b = this.border;
+        this.child.layout(left + b, top + b, width - b * 2, height - b * 2);
+    }
+}
+
+export function Border(width: number, style: string | CanvasGradient | CanvasPattern, child: WPHPLayout<any>): WPHPLayout<any> {
+    return new WPHPBorderLayout(child, width, style);
 }
 
 class FillLayout extends WPHPLayout<undefined> {
@@ -932,6 +1026,7 @@ export function DebugTouch(width: number, height: number, fill: string | CanvasG
     ).onDraw((ctx: CanvasRenderingContext2D, box: LayoutBox) => {
         ctx.fillStyle = fill;
         ctx.strokeStyle = stroke;
+        ctx.lineWidth = 2;
         ctx.fillRect(box.left, box.top, box.width, box.height);
         ctx.beginPath();
         for (const tap of taps) {

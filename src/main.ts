@@ -1,33 +1,35 @@
 // Copyright Charles Dueck 2020
 
 
-//import { DebugTouch, Left, VCenter, RootLayout, Layer, Relative, Draggable, Fill, LayoutBox } from "./ui/node.js"
-import { RootLayout, Relative, Draggable, Fill, LayoutBox, Layer, Left, VCenter, DebugTouch, Scroll, Box } from "./ui/node.js"
+import { RootLayout, Relative, Draggable, Fill, LayoutBox, Layer, Left, VCenter, DebugTouch, Scroll, Box, Border } from "./ui/node.js"
+//import { RootLayout, Fill, Border } from "./ui/node.js"
 
 const canvas = document.getElementById("canvas");
 new RootLayout(
     canvas as HTMLCanvasElement,
-    Scroll(Box(4096, 4096, Layer(
-        Left(
-            VCenter(DebugTouch(384, 192, "lightblue", "blue")),
-            VCenter(DebugTouch(192, 384, "lightgreen", "green")),
-            VCenter(DebugTouch(256, 256, "pink", "red")),
-        ),
-        Relative(
-            Draggable(0, 0, 64, 64, Fill().onDraw(
-                (ctx: CanvasRenderingContext2D, box: LayoutBox) => {
-                    ctx.fillStyle = "darkgray";
-                    ctx.fillRect(box.left, box.top, box.width, box.height);
-                })
+    Border(16, "black",
+        Scroll(Box(4096, 4096, Layer(
+            Left(
+                VCenter(DebugTouch(384, 192, "lightblue", "blue")),
+                VCenter(DebugTouch(192, 384, "lightgreen", "green")),
+                VCenter(DebugTouch(256, 256, "pink", "red")),
             ),
-            Draggable(128, 128, 64, 64, Fill().onDraw(
-                (ctx: CanvasRenderingContext2D, box: LayoutBox) => {
-                    ctx.fillStyle = "lightgray";
-                    ctx.fillRect(box.left, box.top, box.width, box.height);
-                })
+            Relative(
+                Draggable(0, 0, 64, 64, Fill().onDraw(
+                    (ctx: CanvasRenderingContext2D, box: LayoutBox) => {
+                        ctx.fillStyle = "darkgray";
+                        ctx.fillRect(box.left, box.top, box.width, box.height);
+                    })
+                ),
+                Draggable(128, 128, 64, 64, Fill().onDraw(
+                    (ctx: CanvasRenderingContext2D, box: LayoutBox) => {
+                        ctx.fillStyle = "lightgray";
+                        ctx.fillRect(box.left, box.top, box.width, box.height);
+                    })
+                ),
             ),
-        ),
-    ))),
+        )), undefined, 2),
+    )
 );
 
 // TODO: Test credentials.
