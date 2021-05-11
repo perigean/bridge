@@ -35,7 +35,7 @@ export type Material = {
     density: number;    // kg/m^3
     style: string | CanvasGradient | CanvasPattern;
     friction: number;
-    // TODO: when stuff breaks
+    // TODO: when stuff breaks, work hardening, etc.
 };
 
 export type Truss = {

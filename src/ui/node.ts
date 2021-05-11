@@ -380,7 +380,7 @@ export class RootLayout implements ElementContext {
     constructor(canvas: HTMLCanvasElement, child: WPHPLayout<any>) {
         this.child = child;
         this.canvas = canvas;
-        const ctx = canvas.getContext("2d", {alpha: false, desynchronized: true});
+        const ctx = canvas.getContext("2d", {alpha: false});
         if (ctx === null) {
             throw new Error("failed to get 2d context");
         }
