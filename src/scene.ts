@@ -4,6 +4,7 @@ import { Point2D, pointDistance } from "./point.js";
 import { ODEMethod } from "./ode.js";
 //import { Euler } from "./euler.js";
 import { RungeKutta4 } from "./rk4.js";
+import { Box, ElementContext, Fill, Layer, LayoutBox, LayoutHasWidthAndHeight, LayoutTakesWidthAndHeight, OnDrawHandler, Position, PositionLayout, Relative } from "./ui/node.js";
 
 export type Beam = {
     p1: number; // Index of pin at beginning of beam.
@@ -39,16 +40,99 @@ export type Material = {
 };
 
 export type Truss = {
-    pins: Array<Point2D>;
-    mobilePins: number; // The number of pins which are not fixed.
-    beams: Array<Beam>;
+    fixedPins: Array<Point2D>;
+    startPins: Array<Point2D>;
+    editPins: Array<Point2D>;
+    startBeams: Array<Beam>;
+    editBeams: Array<Beam>;
     discs: Array<Disc>;
     materials: Array<Material>;
 };
 
+// minPin returns the lowest pin ID, inclusive.
+function minPin(truss: Truss): number {
+    return -truss.fixedPins.length;
+}
+
+// maxPin returns the highest pin ID, exclusive (so the number it returns is not a valid pin).
+function maxPin(truss: Truss): number {
+    return truss.startPins.length + truss.editPins.length;
+}
+
+function getPin(truss: Truss, pin: number): Point2D {
+    if (pin < -truss.fixedPins.length) {
+        throw new Error(`Unkown pin index ${pin}`);
+    } else if (pin < 0) {
+        return truss.fixedPins[truss.fixedPins.length + pin];
+    } else if (pin < truss.startPins.length) {
+        return truss.startPins[pin];
+    } else if (pin - truss.startPins.length < truss.editPins.length) {
+        return truss.editPins[pin - truss.startPins.length];
+    } else {
+        throw new Error(`Unkown pin index ${pin}`);
+    }
+}
+
+/*
+function assertPin(truss: Truss, pin: number) {
+    if (pin < -truss.fixedPins.length || pin >= truss.startPins.length + truss.editPins.length) {
+        throw new Error(`Unknown pin index ${pin}`);
+    }
+}
+
+function assertMaterial(truss: Truss, m: number) {
+    if (m < 0 || m >= truss.materials.length) {
+        throw new Error(`Unknown material index ${m}`);
+    }
+}
+
+function getClosestPin(truss: Truss, p: Point2D, maxd: number, beamStart?: number): number | undefined {
+    // TODO: acceleration structures. Probably only matters once we have 1000s of pins?
+    const block = new Set<number>();
+    let res = undefined;
+    let resd = maxd;
+    if (beamStart !== undefined) {
+        for (const b of truss.startBeams) {
+            if (b.p1 === beamStart) {
+                block.add(b.p2);
+            } else if (b.p2 === beamStart) {
+                block.add(b.p1);
+            }
+        }
+        for (const b of truss.editBeams) {
+            if (b.p1 === beamStart) {
+                block.add(b.p2);
+            } else if (b.p2 === beamStart) {
+                block.add(b.p1);
+            }
+        }
+    }
+    for (let i = 0; i < truss.fixedPins.length; i++) {
+        const d = pointDistance(p, truss.fixedPins[i]);
+        if (d < resd) {
+            res = i - truss.fixedPins.length;
+            resd = d;
+        }
+    }
+    for (let i = 0; i < truss.startPins.length; i++) {
+        const d = pointDistance(p, truss.startPins[i]);
+        if (d < resd) {
+            res = i;
+            resd = d;
+        }
+    }
+    for (let i = 0; i < truss.editPins.length; i++) {
+        const d = pointDistance(p, truss.editPins[i]);
+        if (d < resd) {
+            res = i + truss.startPins.length;
+            resd = d;
+        }
+    }
+    return res;
+}
+*/
 export type Terrain = {
     hmap: Array<number>;
-    pitch: number;
     friction: number;
     style: string | CanvasGradient | CanvasPattern;
 };
@@ -61,78 +145,205 @@ type SimulationHMap = Array<{
     deckCount: number;  // Number of indices in decks being used.
 }>;
 
+/*
+type TrussEdit = {
+    do: (truss: Truss) => void;
+    undo: (truss: Truss) => void;
+};
+
+function addBeam(
+    truss: Truss,
+    p1: number,
+    p2: number,
+    m: number,
+    w: number,
+    l?: number,
+    deck?: boolean,
+) {
+    assertPin(truss, p1);
+    assertPin(truss, p2);
+    assertMaterial(truss, m);
+    if (w <= 0.0) {
+        throw new Error(`Beam width must be greater than 0, got ${w}`);
+    }
+    if (l !== undefined && l <= 0.0) {
+        throw new Error(`Beam length must be greater than 0, got ${l}`);
+    }
+    for (const beam of truss.editBeams) {
+        if ((p1 === beam.p1 && p2 === beam.p2) || (p1 === beam.p2 && p2 === beam.p1)) {
+            throw new Error(`Beam between ${p1} and ${p2} already exists`);
+        }
+    }
+    for (const beam of truss.startBeams) {
+        if ((p1 === beam.p1 && p2 === beam.p2) || (p1 === beam.p2 && p2 === beam.p1)) {
+            throw new Error(`Beam between ${p1} and ${p2} already exists`);
+        }
+    }
+    truss.editBeams.push({p1, p2, m, w, l, deck});
+}
+
+function unaddBeam(
+    truss: Truss,
+    p1: number,
+    p2: number,
+    m: number,
+    w: number,
+    l?: number,
+    deck?: boolean,
+) {
+    const b = truss.editBeams.pop();
+    if (b === undefined) {
+        throw new Error('No beams exist');
+    }
+    if (b.p1 !== p1 || b.p2 !== p2 || b.m !== m || b.w != w || b.l !== l || b.deck !== deck) {
+        throw new Error('Beam does not match');
+    }
+}
+
+function addBeamAction(
+    p1: number,
+    p2: number,
+    m: number,
+    w: number,
+    l?: number,
+    deck?: boolean,
+    ): TrussEdit {
+    return {
+        do: (truss: Truss) => {
+            addBeam(truss, p1, p2, m, w, l, deck);
+        },
+        undo: (truss: Truss) => {
+            unaddBeam(truss, p1, p2, m, w, l, deck);
+        }, 
+    }
+}
+
+function addPin(truss: Truss, pin: Point2D) {
+    truss.editPins.push(pin);
+}
+
+function unaddPin(truss: Truss, pin: Point2D) {
+    const p = truss.editPins.pop();
+    if (p === undefined) {
+        throw new Error('No pins exist');
+    }
+    if (p[0] !== pin[0] || p[1] !== pin[1]) {
+        throw new Error('Pin does not match');
+    }
+}
+
+function addBeamAndPinAction(
+    p1: number,
+    p2: Point2D,
+    m: number,
+    w: number,
+    l?: number,
+    deck?: boolean,
+    ): TrussEdit {
+    return {
+        do: (truss: Truss) => {
+            const pin = truss.startPins.length + truss.editPins.length;
+            addPin(truss, p2);
+            addBeam(truss, p1, pin, m, w, l, deck);
+        },
+        undo: (truss: Truss) => {
+            const pin = truss.startPins.length + truss.editPins.length - 1;
+            unaddBeam(truss, p1, pin, m, w, l, deck);
+            unaddPin(truss, p2);
+        }, 
+    }
+}
+*/
 export type Scene = {
     truss: Truss;
     terrain: Terrain;
     height: number;
-    // NB: Scene width is determined by terrain width.
+    width: number;
     g: Point2D;  // Acceleration due to gravity.
+}
+
+function drawTerrain(scene: Scene): OnDrawHandler {
+    const terrain = scene.terrain;
+    const hmap = terrain.hmap;
+    const pitch = scene.width / (hmap.length - 1);
+    return function(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, vp: LayoutBox) {
+        const left = vp.left - box.left;
+        const right = left + vp.width;
+        const begin = Math.max(Math.min(Math.floor(left / pitch), hmap.length - 1), 0);
+        const end = Math.max(Math.min(Math.ceil(right / pitch), hmap.length - 1), 0);
+        ctx.fillStyle = terrain.style;
+        ctx.beginPath();
+        ctx.moveTo(box.left, box.top + box.height);
+        for (let i = begin; i <= end; i++) {
+            ctx.lineTo(box.left + i * pitch, box.top + hmap[i]);
+        }
+        ctx.lineTo(box.left + box.width, box.top + box.height);
+        ctx.closePath();
+        ctx.fill();
+    };
 }
 
 export function sceneMethod(scene: Scene): ODEMethod {
     const truss = scene.truss;
-    const mobilePins = truss.mobilePins;
-    const pins = truss.pins;
-    if (mobilePins <= 0 || mobilePins > pins.length) {
-        throw new Error("Invalid mobilePins");
-    }
-
+    
+    const fixedPins = truss.fixedPins;
+    const mobilePins = truss.startPins.length + truss.editPins.length;
     // State accessors
     function getdx(y: Float32Array, pin: number): number {
-        if (pin < mobilePins) {
-            return y[pin * 2 + 0];
+        if (pin < 0) {
+            return fixedPins[fixedPins.length + pin][0];
         } else {
-            return pins[pin][0];
+            return y[pin * 2 + 0];
         }
     }
     function getdy(y: Float32Array, pin: number): number {
-        if (pin < mobilePins) {
-            return y[pin * 2 + 1];
+        if (pin < 0) {
+            return fixedPins[fixedPins.length + pin][1];
         } else {
-            return pins[pin][1];
+            return y[pin * 2 + 1];
         }
     }
     function getvx(y: Float32Array, pin: number): number {
-        if (pin < mobilePins) {
-            return y[mobilePins * 2 + pin * 2 + 0];
-        } else {
+        if (pin < 0) {
             return 0.0;
+        } else {
+            return y[mobilePins * 2 + pin * 2 + 0];
         }
     }
     function getvy(y: Float32Array, pin: number): number {
-        if (pin < mobilePins) {
-            return y[mobilePins * 2 + pin * 2 + 1]; 
+        if (pin < 0) {
+            return 0.0;
         } else {
-            return 0;
+            return y[mobilePins * 2 + pin * 2 + 1]; 
         }
     }
     function setdx(y: Float32Array, pin: number, val: number) {
-        if (pin < mobilePins) {
+        if (pin >= 0) {
             y[pin * 2 + 0] = val;
         }
     }
     function setdy(y: Float32Array, pin: number, val: number) {
-        if (pin < mobilePins) {
+        if (pin >= 0) {
             y[pin * 2 + 1] = val;
         }
     }
     function setvx(y: Float32Array, pin: number, val: number) {
-        if (pin < mobilePins) {
+        if (pin >= 0) {
             y[mobilePins * 2 + pin * 2 + 0] = val;
         }
     }
     function setvy(y: Float32Array, pin: number, val: number) {
-        if (pin < mobilePins) {
+        if (pin >= 0) {
             y[mobilePins * 2 + pin * 2 + 1] = val;
         }
     }
     function addvx(y: Float32Array, pin: number, val: number) {
-        if (pin < mobilePins) {
+        if (pin >= 0) {
             y[mobilePins * 2 + pin * 2 + 0] += val;
         }
     }
     function addvy(y: Float32Array, pin: number, val: number) {
-        if (pin < mobilePins) {
+        if (pin >= 0) {
             y[mobilePins * 2 + pin * 2 + 1] += val;
         }
     }
@@ -148,10 +359,10 @@ export function sceneMethod(scene: Scene): ODEMethod {
         }
     }
 
-    const beams = truss.beams.map((beam: Beam): SimulationBeam => {
+    const beams = [...truss.startBeams, ...truss.editBeams].map((beam: Beam): SimulationBeam => {
         const p1 = beam.p1;
         const p2 = beam.p2;
-        const l = pointDistance(pins[p1], pins[p2]);
+        const l = pointDistance(getPin(truss, p1), getPin(truss, p2));
         const m = l * beam.w * materials[beam.m].density;
         if (p1 < mobilePins) {
             mass[p1] += m * 0.5;
@@ -178,7 +389,7 @@ export function sceneMethod(scene: Scene): ODEMethod {
         }
     }
 
-    const pitch = scene.terrain.pitch;
+    const pitch = scene.width / (scene.terrain.hmap.length - 1);
     const hmap: SimulationHMap = scene.terrain.hmap.map((h, i) => {
         if (i + 1 >= scene.terrain.hmap.length) {
             return {
@@ -217,8 +428,9 @@ export function sceneMethod(scene: Scene): ODEMethod {
     // Set up initial ODE state vector.
     const y0 = new Float32Array(mobilePins * 4);
     for (let i = 0; i < mobilePins; i++) {
-        setdx(y0, i, pins[i][0]);
-        setdy(y0, i, pins[i][1]);
+        const d = getPin(truss, i);
+        setdx(y0, i, d[0]);
+        setdy(y0, i, d[1]);
     }
     // NB: Initial velocities are all 0, no need to initialize.
 
@@ -427,18 +639,11 @@ export function sceneMethod(scene: Scene): ODEMethod {
         }
     });
 }
-
-export interface TrussRender {
-    (ctx: CanvasRenderingContext2D, ode: ODEMethod): void;
-}
-
+/*
 export function sceneRenderer(scene: Scene): TrussRender {
     const truss = scene.truss;
-    const pins = truss.pins;
-    const beams = truss.beams;
     const materials = truss.materials;
-    const mobilePins = truss.mobilePins;
-
+    
     // Pre-render terrain.
     const terrain = scene.terrain;
     const hmap = terrain.hmap;
@@ -471,13 +676,19 @@ export function sceneRenderer(scene: Scene): TrussRender {
         }
 
         // Beams.
+        ctx.lineCap = "round";
         for (const beam of beams) {
             ctx.strokeStyle = materials[beam.m].style;
-            ctx.lineCap = "round";
             ctx.lineWidth = beam.w;
             ctx.beginPath();
             const p1 = beam.p1;
-            if (p1 < mobilePins) {
+
+            // TODO: figure out how to use ode accessors.
+            // Wait, does that mean we need an ODE for a static scene?
+            // Will need different methods.
+            
+            if (p1 < 0) {
+                const p = getPin(truss, p1);
                 ctx.moveTo(y[p1 * 2 + 0], y[p1 * 2 + 1]);
             } else {
                 const pin = pins[p1];
@@ -493,4 +704,40 @@ export function sceneRenderer(scene: Scene): TrussRender {
             ctx.stroke();
         }
     }
+}
+*/
+
+function drawPin(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox) {
+    ctx.strokeRect(box.left + 1, box.top + 1, box.width - 2, box.height - 2);
+}
+
+function CreateBeamPin(truss: Truss, pin: number): PositionLayout {
+    const p = getPin(truss, pin);
+    return Position(p[0] - 8, p[1] - 8, 16, 16)
+        .onDraw(drawPin);
+}
+
+function AddTrussLayer(scene: Scene): LayoutTakesWidthAndHeight {
+    const truss = scene.truss;
+    const minp = minPin(truss);
+    const maxp = maxPin(truss);
+    const children = new Array<PositionLayout>(maxp - minp);
+    for (let i = minp; i < maxp; i++) {
+        children[i - minp] = CreateBeamPin(truss, i);
+    }
+    return Relative(...children).onDraw((ctx: CanvasRenderingContext2D) => {
+        ctx.lineWidth = 2;
+        ctx.lineCap = "round";
+        ctx.strokeStyle = "black";
+    });
+}
+
+export function SceneElement(scene: Scene): LayoutHasWidthAndHeight {
+    return Box(
+        scene.width, scene.height,
+        Layer(
+            Fill().onDraw(drawTerrain(scene)),
+            AddTrussLayer(scene),
+        ),
+    );
 }

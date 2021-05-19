@@ -11,14 +11,19 @@ export type LayoutBox = {
 
 // TODO: Pass ElementContext along with layout, so that we can have dynamic layouts.
 
-export interface ElementContext {
+interface ScrollerEvents {
+    elementDetached(e: Element<any, any>): void;
+};
+
+export interface ElementContext extends ScrollerEvents {
     requestDraw(): void;
     requestLayout(): void;
-    // TODO: requestRender?
+    pushScroller(scroller: ScrollerEvents): number;
+    popScroller(token: number): void;
 };
 
 type StatelessHandler = (ec: ElementContext) => void;
-type OnDrawHandler = (ctx: CanvasRenderingContext2D, box: LayoutBox, ec: ElementContext, vp: LayoutBox) => void;
+export type OnDrawHandler = (ctx: CanvasRenderingContext2D, box: LayoutBox, ec: ElementContext, vp: LayoutBox) => void;
 
 type OnTouchBeginHandler = (id: number, p: Point2D, ec: ElementContext) => void;
 type TouchMove = {
@@ -28,12 +33,12 @@ type TouchMove = {
 type OnTouchMoveHandler = (ts: Array<TouchMove>, ec: ElementContext) => void;
 type OnTouchEndHandler = (id: number, ec: ElementContext) => void;
 
-type OnTapHandler = (p: Point2D, ec: ElementContext) => void;
-type PanPoint = {
+export type OnTapHandler = (p: Point2D, ec: ElementContext) => void;
+export type PanPoint = {
     prev: Point2D;
     curr: Point2D;
 };
-type OnPanHandler = (ps: Array<PanPoint>, ec: ElementContext) => void;
+export type OnPanHandler = (ps: Array<PanPoint>, ec: ElementContext) => void;
 // TODO: Pass touch size down with touch events (instead of scale?)
 // Is that enough? Probably we will always want a transoformation matrix.
 // But enough for now, so just do that.
@@ -193,25 +198,36 @@ class Element<LayoutType extends string, Child extends ChildConstraint<string>> 
         this.touchGesture.onPanEndHandler = handler;
         return this;
     }
-
-    onAttachHandler?: StatelessHandler;
-    onAttach(handler: StatelessHandler): this {
-        if (this.onAttachHandler !== undefined) {
-            throw new Error(`onAttach already set`);
-        }
-        this.onAttachHandler = handler;
-        return this;
-    }
-
-    onDetachHandler?: StatelessHandler;
-    onDetach(handler: StatelessHandler): this {
-        if (this.onDetachHandler !== undefined) {
-            throw new Error(`onDetach already set`);
-        }
-        this.onDetachHandler = handler;
-        return this;
-    }
 };
+
+export function addChild(e: Element<any, StaticArray<Element<any, any>>>, child: Element<any, any>, index?: number) {
+    const children = new Array<Element<any, any>>(e.child.length + 1);
+    let i = 0;
+    let j = 0;
+    for (; i < e.child.length; i++) {
+        if (i === index) {
+            children[j++] = child;
+        }
+        children[j++] = e.child[i];
+    }
+    if (j === i) {
+        children[j] = child;
+    }
+    e.child = children;
+}
+
+export function removeChild(e: Element<any, StaticArray<Element<any, any>>>, index: number, ec: ElementContext) {
+    const children = new Array<Element<any, any>>(e.child.length - 1);
+    let j = 0;
+    for (let i = 0; i < e.child.length; i++) {
+        if (i === index) {
+            ec.elementDetached(e.child[i]);
+        } else {
+            children[j++] = e.child[i];
+        }
+    }
+    e.child = children;
+}
 
 abstract class WPHPLayout<Child extends ChildConstraint<any>> extends Element<'wphp', Child> {
     constructor(child: Child) {
@@ -241,6 +257,10 @@ abstract class WSHSLayout<Child extends ChildConstraint<any>> extends Element<'w
     abstract layout(left: number, top: number): void;
 };
 
+export type LayoutHasWidthAndHeight = WSHSLayout<any>;
+export type LayoutTakesWidthAndHeight = WPHPLayout<any>;
+
+
 class FlexLayout extends Element<'flex', WPHPLayout<any>> {
     size: number;
     grow: number;
@@ -257,27 +277,6 @@ class FlexLayout extends Element<'flex', WPHPLayout<any>> {
         this.child.layout(left, top, width, height);
     }
 };
-
-function callAttachHandlers(root: Element<any, any>, handler: "onAttachHandler" | "onDetachHandler", ec: ElementContext) {
-    const stack = [root];
-    while (stack.length > 0) {
-        const e = stack.pop() as Element<any, any>;
-        const h = e[handler];
-        if (h !== undefined) {
-            h(ec);
-        }
-        if (e.child === undefined) {
-            // No children, so no more work to do.
-        } else if (e.child[Symbol.iterator]) {
-            // Push last child on first, so we visit it last.
-            for (let i = e.child.length - 1; i >= 0; i--) {
-                stack.push(e.child[i]);
-            }
-        } else {
-            stack.push(e.child);
-        }
-    }
-}
 
 function drawElementTree(ctx: CanvasRenderingContext2D, root: Element<any, any>, ec: ElementContext, vp: LayoutBox) {
     const stack = [root];
@@ -360,6 +359,11 @@ function findTouchTarget(root: Element<any, any>, p: Point2D): undefined | HasTo
     return undefined;
 }
 
+type TARGET_ROOT = 1;
+const TARGET_ROOT = 1;
+type TARGET_NONE = 2;
+const TARGET_NONE = 2;
+
 export class RootLayout implements ElementContext {
     child: WPHPLayout<any>;
     canvas: HTMLCanvasElement;
@@ -371,11 +375,14 @@ export class RootLayout implements ElementContext {
     debounceLayout: Debouncer;
     debounceDraw: Debouncer;
 
-    private touchTargets: Map<number, HasTouchHandlers | null>;
+    private touchTargets: Map<number, HasTouchHandlers | TARGET_ROOT | TARGET_NONE>;
     private touchStart: (evt: TouchEvent) => void; 
     private touchMove: (evt: TouchEvent) => void;
     private touchEnd: (evt: TouchEvent) => void;
-    
+
+    private scrollerStack: Array<ScrollerEvents>;
+    private nextScrollerStackToken: number;
+    private scrollerStackTokens: Array<number>;
 
     constructor(canvas: HTMLCanvasElement, child: WPHPLayout<any>) {
         this.child = child;
@@ -435,7 +442,7 @@ export class RootLayout implements ElementContext {
                 const p: Point2D = [t.clientX, t.clientY];
                 target = findTouchTarget(this.child, p);
                 if (target === undefined) {
-                    this.touchTargets.set(t.identifier, null);
+                    this.touchTargets.set(t.identifier, TARGET_ROOT);
                     // Add placeholder to active targets map so we know anbout it.
                     // Allow default action, so e.g. page can be scrolled.
                 } else {
@@ -457,7 +464,11 @@ export class RootLayout implements ElementContext {
                 const target = this.touchTargets.get(t.identifier);
                 if (target === undefined) {
                     throw new Error(`Touch move without start, id ${t.identifier}`);
-                } else if (target !== null) {
+                } else if (target === TARGET_ROOT) {
+                    // Don't do anything, as the root element can't scroll.
+                } else if (target === TARGET_NONE) {
+                    // Don't do anything, target probably deleted.
+                } else {
                     preventDefault = true;
                     const ts = targets.get(target) || [];
                     ts.push({
@@ -484,7 +495,7 @@ export class RootLayout implements ElementContext {
             }
             for (const [id, target] of removed) {
                 this.touchTargets.delete(id);
-                if (target !== null) {
+                if (target !== TARGET_ROOT && target !== TARGET_NONE) {
                     preventDefault = true;
                     target.onTouchEndHandler(id, this /* ElementContext */);
                 }
@@ -498,8 +509,35 @@ export class RootLayout implements ElementContext {
         this.canvas.addEventListener("touchend", this.touchEnd, false);
         this.canvas.addEventListener("touchcancel", this.touchEnd, false);
 
-        callAttachHandlers(this.child, "onAttachHandler", this /* ElementContext */);
+        this.scrollerStack = [{
+            elementDetached: (e: Element<any, any>) => {
+                for (const [k, v] of this.touchTargets) {
+                    if (v === e) {
+                        this.touchTargets.set(k, TARGET_NONE);
+                    }
+                }
+            }
+        }];
+        this.nextScrollerStackToken = 0;
+        this.scrollerStackTokens = [];
+
         this.requestLayout();
+    }
+    elementDetached(e: Element<any, any>): void {
+        this.scrollerStack[this.scrollerStack.length - 1].elementDetached(e);
+    }
+    pushScroller(scroller: ScrollerEvents): number {
+        const token = this.nextScrollerStackToken++;
+        this.scrollerStackTokens.push(token)
+        this.scrollerStack.push(scroller);
+        return token;
+    }
+    popScroller(token: number): void {
+        const t = this.scrollerStackTokens.pop();
+        this.scrollerStack.pop();
+        if (t !== token) {
+            throw new Error(`Token mismatch in popScroller, ${token} given, ${t} on stack`);
+        }
     }
 
     disconnect() {
@@ -532,14 +570,14 @@ export class RootLayout implements ElementContext {
 
 // TODO: convert to use Affine transform.
 
-class ScrollLayout extends WPHPLayout<undefined> {
+class ScrollLayout extends WPHPLayout<undefined> implements ScrollerEvents {
     // ScrollLayout has to intercept all events to make sure any locations are updated by
     // the scroll position, so child is undefined, and all events are forwarded to scroller.
     scroller: WSHSLayout<any>;
     scroll: Point2D;
     zoom: number;
     zoomMax: number;
-    private touchTargets: Map<number, HasTouchHandlers>;
+    private touchTargets: Map<number, HasTouchHandlers | TARGET_ROOT | TARGET_NONE>;
     private touchScroll: Map<number, { prev: Point2D, curr: Point2D }>;
 
     private updateScroll() {
@@ -620,10 +658,12 @@ class ScrollLayout extends WPHPLayout<undefined> {
             const vpScroller = {
                 left: this.scroll[0],
                 top: this.scroll[1],
-                width: this.width,
-                height: this.height,
+                width: this.width / this.zoom,
+                height: this.height / this.zoom,
             };
+            const token = ec.pushScroller(this);
             drawElementTree(ctx, this.scroller, ec, vpScroller);
+            ec.popScroller(token);
             // TODO: restore transform in a finally?
             ctx.restore();
         };
@@ -633,26 +673,34 @@ class ScrollLayout extends WPHPLayout<undefined> {
             const target = findTouchTarget(this.scroller, cp);
             if (target === undefined) {
                 // Add placeholder null to active touches, so we know they should scroll.
+                this.touchTargets.set(id, TARGET_ROOT);
                 this.touchScroll.set(id, { prev: pp, curr: pp });
             } else {
                 this.touchTargets.set(id, target);
+                const token = ec.pushScroller(this);
                 target.onTouchBeginHandler(id, cp, ec);
+                ec.popScroller(token);
             }
         };
         this.onTouchMoveHandler = (ts: Array<TouchMove>, ec: ElementContext) => {
             const targets = new Map<HasTouchHandlers, Array<TouchMove>>();
             for (const t of ts) {
                 const target = this.touchTargets.get(t.id);
-                const scroll = this.touchScroll.get(t.id);
-                if (target !== undefined) {
+                if (target === undefined) {
+                    throw new Error(`Unknown touch move ID ${t.id}`);
+                } else if (target === TARGET_ROOT) {
+                    const scroll = this.touchScroll.get(t.id);
+                    if (scroll === undefined) {
+                        throw new Error(`Touch move with ID ${t.id} has target === TARGET_ROOT, but is not in touchScroll`)
+                    }
+                    scroll.prev = scroll.curr;
+                    scroll.curr = t.p;
+                } else if (target === TARGET_NONE) {
+                    // Don't do anything, target deleted.
+                } else {
                     const tts = targets.get(target) || [];
                     tts.push(t);
                     targets.set(target, tts);
-                } else if (scroll !== undefined) {
-                    scroll.prev = scroll.curr;
-                    scroll.curr = t.p;
-                } else {
-                    throw new Error(`Unknown touch move ID ${t.id}`);
                 }
             }
 
@@ -660,6 +708,7 @@ class ScrollLayout extends WPHPLayout<undefined> {
             this.updateScroll();
 
             // Forward touch moves.
+            const token = ec.pushScroller(this);
             for (const [target, tts] of targets) {
                 for (let i = 0; i < tts.length; i++) {
                     tts[i] = {
@@ -669,20 +718,36 @@ class ScrollLayout extends WPHPLayout<undefined> {
                 }
                 target.onTouchMoveHandler(tts, ec);
             }
+            ec.popScroller(token);
             ec.requestDraw();
         };
         this.onTouchEndHandler = (id: number, ec: ElementContext) => {
             const target = this.touchTargets.get(id);
-            if (target !== undefined) {
+            if (target === undefined) {
+                throw new Error(`Unknown touch end ID ${id}`);
+            } else if (target === TARGET_ROOT) {
+                if (!this.touchScroll.delete(id)) {
+                    throw new Error(`Touch end ID ${id} has target TARGET_ROOT, but is not in touchScroll`);
+                }
+            } else if (target === TARGET_NONE) {
+                // Do nothing, taret was deleted.
+            } else {
                 this.touchTargets.delete(id);
                 if (target.onTouchEndHandler !== undefined) {
+                    const token = ec.pushScroller(this);
                     target.onTouchEndHandler(id, ec);
+                    ec.popScroller(token);
                 }
-            } else if (!this.touchScroll.delete(id)) {
-                throw new Error(`Unknown touch end ID ${id}`);
             }
         };
         // TODO: other handlers need forwarding.
+    }
+    elementDetached(e: Element<any, any>): void {
+        for (const [k, v] of this.touchTargets) {
+            if (v === e) {
+                this.touchTargets.set(k, TARGET_NONE);
+            }
+        }
     }
 
     layout(left: number, top: number, width: number, height: number): void {
@@ -1071,13 +1136,13 @@ export function Layer(...children: Array<WPHPLayout<any>>): LayerLayout {
 }
 
 
-class PositionLayout extends Element<"pos", WPHPLayout<any>> {
+export class PositionLayout extends Element<"pos", WPHPLayout<any> | undefined> {
     requestLeft: number;
     requestTop: number;
     requestWidth: number;
     requestHeight: number;
 
-    constructor(left: number, top: number, width: number, height: number, child: WPHPLayout<any>) {
+    constructor(left: number, top: number, width: number, height: number, child: WPHPLayout<any> | undefined) {
         super("pos", child);
         this.requestLeft = left;
         this.requestTop = top;
@@ -1090,16 +1155,18 @@ class PositionLayout extends Element<"pos", WPHPLayout<any>> {
         this.height = Math.min(this.requestHeight, parent.height);
         this.top = clamp(this.requestTop, parent.top, parent.top + parent.height - this.height);
 
-        this.child.layout(this.left, this.top, this.width, this.height);
+        if (this.child !== undefined) {
+            this.child.layout(this.left, this.top, this.width, this.height);
+        }
     }
 };
 
 // TODO: support statically sized children, 
-export function Position(left: number, top: number, width: number, height: number, child: WPHPLayout<any>) {
+export function Position(left: number, top: number, width: number, height: number, child?: WPHPLayout<any>) {
     return new PositionLayout(left, top, width, height, child);
 }
 
-export function Draggable(left: number, top: number, width: number, height: number, child: WPHPLayout<any>) {
+export function Draggable(left: number, top: number, width: number, height: number, child?: WPHPLayout<any>) {
     const layout = new PositionLayout(left, top, width, height, child);
     return layout.onPan((ps: Array<PanPoint>, ec: ElementContext) => {
         let dx = 0;

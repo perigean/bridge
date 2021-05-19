@@ -1,34 +1,35 @@
 // Copyright Charles Dueck 2020
 
 
-import { RootLayout, Relative, Draggable, Fill, LayoutBox, Layer, Left, VCenter, DebugTouch, Scroll, Box, Border } from "./ui/node.js"
+import { Scene, SceneElement } from "./scene.js";
+import { RootLayout, Scroll, Border } from "./ui/node.js"
 //import { RootLayout, Fill, Border } from "./ui/node.js"
+
+const scene : Scene = {
+    truss: {
+        fixedPins: [[0, 512], [128, 512], [1920, 512], [2048, 512]],
+        startPins: [],
+        editPins: [],
+        startBeams: [],
+        editBeams: [],
+        discs: [],
+        materials: [],
+    },
+    terrain: {
+        hmap: [512, 512, 576, 640, 672, 688, 688, 768, 768, 768, 768, 688, 672, 640, 576, 512, 512],
+        friction: 0.5,
+        style: "darkgrey",
+    },
+    height: 1024,
+    width: 2048,
+    g: [0, 128],
+};
 
 const canvas = document.getElementById("canvas");
 new RootLayout(
     canvas as HTMLCanvasElement,
     Border(16, "black",
-        Scroll(Box(4096, 4096, Layer(
-            Left(
-                VCenter(DebugTouch(384, 192, "lightblue", "blue")),
-                VCenter(DebugTouch(192, 384, "lightgreen", "green")),
-                VCenter(DebugTouch(256, 256, "pink", "red")),
-            ),
-            Relative(
-                Draggable(0, 0, 64, 64, Fill().onDraw(
-                    (ctx: CanvasRenderingContext2D, box: LayoutBox) => {
-                        ctx.fillStyle = "darkgray";
-                        ctx.fillRect(box.left, box.top, box.width, box.height);
-                    })
-                ),
-                Draggable(128, 128, 64, 64, Fill().onDraw(
-                    (ctx: CanvasRenderingContext2D, box: LayoutBox) => {
-                        ctx.fillStyle = "lightgray";
-                        ctx.fillRect(box.left, box.top, box.width, box.height);
-                    })
-                ),
-            ),
-        )), undefined, 2),
+        Scroll(SceneElement(scene), undefined, 2),
     )
 );
 
