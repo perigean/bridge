@@ -1,10 +1,10 @@
 // Copyright Charles Dueck 2020
 
 import { Point2D, pointDistance } from "./point.js";
-import { ODEMethod } from "./ode.js";
+//import { ODEMethod } from "./ode.js";
 //import { Euler } from "./euler.js";
-import { RungeKutta4 } from "./rk4.js";
-import { Box, ElementContext, Fill, Layer, LayoutBox, LayoutHasWidthAndHeight, LayoutTakesWidthAndHeight, OnDrawHandler, Position, PositionLayout, Relative } from "./ui/node.js";
+//import { RungeKutta4 } from "./rk4.js";
+import { addChild, Box, ElementContext, Fill, Layer, LayoutBox, LayoutHasWidthAndHeight, LayoutTakesWidthAndHeight, PanPoint, Position, PositionLayout, Relative, removeChild } from "./ui/node.js";
 
 export type Beam = {
     p1: number; // Index of pin at beginning of beam.
@@ -15,6 +15,7 @@ export type Beam = {
     deck?: boolean; // Is this beam a deck? (do discs collide)
 };
 
+/*
 type SimulationBeam = {
     p1: number;
     p2: number;
@@ -23,6 +24,7 @@ type SimulationBeam = {
     l: number;
     deck: boolean;
 }
+*/
 
 export type Disc = {
     p: number;  // Index of moveable pin this disc surrounds.
@@ -49,94 +51,12 @@ export type Truss = {
     materials: Array<Material>;
 };
 
-// minPin returns the lowest pin ID, inclusive.
-function minPin(truss: Truss): number {
-    return -truss.fixedPins.length;
-}
-
-// maxPin returns the highest pin ID, exclusive (so the number it returns is not a valid pin).
-function maxPin(truss: Truss): number {
-    return truss.startPins.length + truss.editPins.length;
-}
-
-function getPin(truss: Truss, pin: number): Point2D {
-    if (pin < -truss.fixedPins.length) {
-        throw new Error(`Unkown pin index ${pin}`);
-    } else if (pin < 0) {
-        return truss.fixedPins[truss.fixedPins.length + pin];
-    } else if (pin < truss.startPins.length) {
-        return truss.startPins[pin];
-    } else if (pin - truss.startPins.length < truss.editPins.length) {
-        return truss.editPins[pin - truss.startPins.length];
-    } else {
-        throw new Error(`Unkown pin index ${pin}`);
-    }
-}
-
-/*
-function assertPin(truss: Truss, pin: number) {
-    if (pin < -truss.fixedPins.length || pin >= truss.startPins.length + truss.editPins.length) {
-        throw new Error(`Unknown pin index ${pin}`);
-    }
-}
-
-function assertMaterial(truss: Truss, m: number) {
-    if (m < 0 || m >= truss.materials.length) {
-        throw new Error(`Unknown material index ${m}`);
-    }
-}
-
-function getClosestPin(truss: Truss, p: Point2D, maxd: number, beamStart?: number): number | undefined {
-    // TODO: acceleration structures. Probably only matters once we have 1000s of pins?
-    const block = new Set<number>();
-    let res = undefined;
-    let resd = maxd;
-    if (beamStart !== undefined) {
-        for (const b of truss.startBeams) {
-            if (b.p1 === beamStart) {
-                block.add(b.p2);
-            } else if (b.p2 === beamStart) {
-                block.add(b.p1);
-            }
-        }
-        for (const b of truss.editBeams) {
-            if (b.p1 === beamStart) {
-                block.add(b.p2);
-            } else if (b.p2 === beamStart) {
-                block.add(b.p1);
-            }
-        }
-    }
-    for (let i = 0; i < truss.fixedPins.length; i++) {
-        const d = pointDistance(p, truss.fixedPins[i]);
-        if (d < resd) {
-            res = i - truss.fixedPins.length;
-            resd = d;
-        }
-    }
-    for (let i = 0; i < truss.startPins.length; i++) {
-        const d = pointDistance(p, truss.startPins[i]);
-        if (d < resd) {
-            res = i;
-            resd = d;
-        }
-    }
-    for (let i = 0; i < truss.editPins.length; i++) {
-        const d = pointDistance(p, truss.editPins[i]);
-        if (d < resd) {
-            res = i + truss.startPins.length;
-            resd = d;
-        }
-    }
-    return res;
-}
-*/
 export type Terrain = {
     hmap: Array<number>;
     friction: number;
     style: string | CanvasGradient | CanvasPattern;
 };
-
+/*
 type SimulationHMap = Array<{
     height: number;
     nx: number; // Normal unit vector.
@@ -144,145 +64,370 @@ type SimulationHMap = Array<{
     decks: Array<SimulationBeam>;   // Updated every frame, all decks above this segment.
     deckCount: number;  // Number of indices in decks being used.
 }>;
+*/
 
-/*
-type TrussEdit = {
-    do: (truss: Truss) => void;
-    undo: (truss: Truss) => void;
+type AddBeamAction = {
+    type: "add_beam";
+    p1: number;
+    p2: number;
+    m: number;
+    w: number;
+    l?: number;
+    deck?: boolean;
 };
 
-function addBeam(
-    truss: Truss,
-    p1: number,
-    p2: number,
-    m: number,
-    w: number,
-    l?: number,
-    deck?: boolean,
-) {
-    assertPin(truss, p1);
-    assertPin(truss, p2);
-    assertMaterial(truss, m);
-    if (w <= 0.0) {
-        throw new Error(`Beam width must be greater than 0, got ${w}`);
-    }
-    if (l !== undefined && l <= 0.0) {
-        throw new Error(`Beam length must be greater than 0, got ${l}`);
-    }
-    for (const beam of truss.editBeams) {
-        if ((p1 === beam.p1 && p2 === beam.p2) || (p1 === beam.p2 && p2 === beam.p1)) {
-            throw new Error(`Beam between ${p1} and ${p2} already exists`);
-        }
-    }
-    for (const beam of truss.startBeams) {
-        if ((p1 === beam.p1 && p2 === beam.p2) || (p1 === beam.p2 && p2 === beam.p1)) {
-            throw new Error(`Beam between ${p1} and ${p2} already exists`);
-        }
-    }
-    truss.editBeams.push({p1, p2, m, w, l, deck});
-}
+type AddPinAction = {
+    type: "add_pin";
+    pin: Point2D;
+};
 
-function unaddBeam(
-    truss: Truss,
-    p1: number,
-    p2: number,
-    m: number,
-    w: number,
-    l?: number,
-    deck?: boolean,
-) {
-    const b = truss.editBeams.pop();
-    if (b === undefined) {
-        throw new Error('No beams exist');
-    }
-    if (b.p1 !== p1 || b.p2 !== p2 || b.m !== m || b.w != w || b.l !== l || b.deck !== deck) {
-        throw new Error('Beam does not match');
-    }
-}
+type CompositeAction = {
+    type: "composite";
+    actions: Array<TrussAction>;
+};
 
-function addBeamAction(
-    p1: number,
-    p2: number,
-    m: number,
-    w: number,
-    l?: number,
-    deck?: boolean,
-    ): TrussEdit {
-    return {
-        do: (truss: Truss) => {
-            addBeam(truss, p1, p2, m, w, l, deck);
-        },
-        undo: (truss: Truss) => {
-            unaddBeam(truss, p1, p2, m, w, l, deck);
-        }, 
-    }
-}
+type TrussAction = AddBeamAction | AddPinAction | CompositeAction;
 
-function addPin(truss: Truss, pin: Point2D) {
-    truss.editPins.push(pin);
-}
 
-function unaddPin(truss: Truss, pin: Point2D) {
-    const p = truss.editPins.pop();
-    if (p === undefined) {
-        throw new Error('No pins exist');
-    }
-    if (p[0] !== pin[0] || p[1] !== pin[1]) {
-        throw new Error('Pin does not match');
-    }
-}
-
-function addBeamAndPinAction(
-    p1: number,
-    p2: Point2D,
-    m: number,
-    w: number,
-    l?: number,
-    deck?: boolean,
-    ): TrussEdit {
-    return {
-        do: (truss: Truss) => {
-            const pin = truss.startPins.length + truss.editPins.length;
-            addPin(truss, p2);
-            addBeam(truss, p1, pin, m, w, l, deck);
-        },
-        undo: (truss: Truss) => {
-            const pin = truss.startPins.length + truss.editPins.length - 1;
-            unaddBeam(truss, p1, pin, m, w, l, deck);
-            unaddPin(truss, p2);
-        }, 
-    }
-}
-*/
-export type Scene = {
+export type SceneJSON = {
     truss: Truss;
     terrain: Terrain;
     height: number;
     width: number;
     g: Point2D;  // Acceleration due to gravity.
+    redoStack: Array<TrussAction>;
+    undoStack: Array<TrussAction>;
 }
 
-function drawTerrain(scene: Scene): OnDrawHandler {
-    const terrain = scene.terrain;
-    const hmap = terrain.hmap;
-    const pitch = scene.width / (hmap.length - 1);
-    return function(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, vp: LayoutBox) {
-        const left = vp.left - box.left;
-        const right = left + vp.width;
-        const begin = Math.max(Math.min(Math.floor(left / pitch), hmap.length - 1), 0);
-        const end = Math.max(Math.min(Math.ceil(right / pitch), hmap.length - 1), 0);
-        ctx.fillStyle = terrain.style;
-        ctx.beginPath();
-        ctx.moveTo(box.left, box.top + box.height);
-        for (let i = begin; i <= end; i++) {
-            ctx.lineTo(box.left + i * pitch, box.top + hmap[i]);
+type OnAddPinHandler = (editIndex: number, pin: number, p: Point2D, ec: ElementContext) => void;
+type OnRemovePinHandler = (editIndex: number, pin: number, ec: ElementContext) => void;
+
+
+export class Scene {
+    private scene: SceneJSON;
+    private onAddPinHandlers: Array<OnAddPinHandler>;
+    private onRemovePinHandlers: Array<OnRemovePinHandler>;
+    private editMaterial: number;
+    private editWidth: number;
+    private editDeck: boolean;
+
+    private assertPin(pin: number) {
+        const truss = this.scene.truss;
+        if (pin < -truss.fixedPins.length || pin >= truss.startPins.length + truss.editPins.length) {
+            throw new Error(`Unknown pin index ${pin}`);
         }
-        ctx.lineTo(box.left + box.width, box.top + box.height);
-        ctx.closePath();
-        ctx.fill();
-    };
-}
+    }
+    
+    private assertMaterial(m: number) {
+        const materials = this.scene.truss.materials;
+        if (m < 0 || m >= materials.length) {
+            throw new Error(`Unknown material index ${m}`);
+        }
+    }
 
+    private doAddBeam(a: AddBeamAction) {
+        const truss = this.scene.truss;
+        const p1 = a.p1;
+        const p2 = a.p2;
+        const m = a.m;
+        const w = a.w;
+        const l = a.l;
+        const deck = a.deck;
+        this.assertPin(p1);
+        this.assertPin(p2);
+        this.assertMaterial(m);
+        if (w <= 0.0) {
+            throw new Error(`Beam width must be greater than 0, got ${w}`);
+        }
+        if (l !== undefined && l <= 0.0) {
+            throw new Error(`Beam length must be greater than 0, got ${l}`);
+        }
+        if (this.beamExists(p1, p2)) {
+            throw new Error(`Beam between pins ${p1} and ${p2} already exists`);
+        }
+        truss.editBeams.push({p1, p2, m, w, l, deck});
+    }
+    
+    private undoAddBeam(a: AddBeamAction): void {
+        const truss = this.scene.truss;
+        const b = truss.editBeams.pop();
+        if (b === undefined) {
+            throw new Error('No beams exist');
+        }
+        if (b.p1 !== a.p1 || b.p2 !== a.p2 || b.m !== a.m || b.w != a.w || b.l !== a.l || b.deck !== a.deck) {
+            throw new Error('Beam does not match');
+        }
+    }
+
+    private doAddPin(a: AddPinAction, ec: ElementContext): void {
+        const truss = this.scene.truss;
+        const editIndex = truss.editPins.length;
+        const pin = truss.startPins.length + editIndex;
+        truss.editPins.push(a.pin);
+        for (const h of this.onAddPinHandlers) {
+            h(editIndex, pin, a.pin, ec);
+        }
+    }
+
+    private undoAddPin(a: AddPinAction, ec: ElementContext): void {
+        const truss = this.scene.truss;
+        const p = truss.editPins.pop();
+        if (p === undefined) {
+            throw new Error('No pins exist');
+        }
+        if (p[0] !== a.pin[0] || p[1] !== a.pin[1]) {
+            throw new Error('Pin does not match');
+        }
+        const editIndex = truss.editPins.length;
+        const pin = truss.startPins.length + editIndex;
+        for (const h of this.onRemovePinHandlers) {
+            h(editIndex, pin, ec);
+        }
+    }
+
+    private doComposite(a: CompositeAction, ec: ElementContext): void {
+        for (let i = 0; i < a.actions.length; i++) {
+            this.doAction(a.actions[i], ec);
+        }
+    }
+
+    private undoComposite(a: CompositeAction, ec: ElementContext): void {
+        for (let i = a.actions.length - 1; i >= 0; i--) {
+            this.undoAction(a.actions[i], ec);
+        }
+    }
+
+    private doAction(a: TrussAction, ec: ElementContext): void {
+        switch (a.type) {
+            case "add_beam":
+                this.doAddBeam(a);
+                break;
+            case "add_pin":
+                this.doAddPin(a, ec);
+                break;
+            case "composite":
+                this.doComposite(a, ec);
+                break;
+        }
+    }
+
+    private undoAction(a: TrussAction, ec: ElementContext): void {
+        switch (a.type) {
+            case "add_beam":
+                this.undoAddBeam(a);
+                break;
+            case "add_pin":
+                this.undoAddPin(a, ec);
+                break;
+            case "composite":
+                this.undoComposite(a, ec);
+                break;
+        }
+    }
+
+    constructor(scene: SceneJSON) {
+        this.scene = scene;
+        this.onAddPinHandlers = [];
+        this.onRemovePinHandlers = [];
+        // TODO: proper initialization;
+        this.editMaterial = 0;
+        this.editWidth = 4;
+        this.editDeck = false;
+    }
+
+    beamExists(p1: number, p2: number): boolean {
+        const truss = this.scene.truss;
+        for (const beam of truss.editBeams) {
+            if ((p1 === beam.p1 && p2 === beam.p2) || (p1 === beam.p2 && p2 === beam.p1)) {
+                return true;
+            }
+        }
+        for (const beam of truss.startBeams) {
+            if ((p1 === beam.p1 && p2 === beam.p2) || (p1 === beam.p2 && p2 === beam.p1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Scene enumeration/observation methods
+
+    onAddPin(handler: OnAddPinHandler) {
+        this.onAddPinHandlers.push(handler);
+    }
+
+    onRemovePin(handler: OnRemovePinHandler) {
+        this.onRemovePinHandlers.push(handler);
+    }
+
+    // TODO: Clear handlers?
+
+    getEditBeams(): Array<Beam> {
+        return this.scene.truss.editBeams;
+    }
+
+    getStartBeams(): Array<Beam> {
+        return this.scene.truss.startBeams;
+    }
+
+    getMaterial(m: number): Material {
+        const materials = this.scene.truss.materials;
+        if (m < 0 || m >= materials.length) {
+            throw new Error(`invalid material ${m}`);
+        }
+        return materials[m];
+    }
+
+    *getUneditablePins() {
+        const truss = this.scene.truss;
+        let i = -truss.fixedPins.length;
+        for (const p of truss.fixedPins) {
+            yield {i, p};
+            i++;
+        }
+        for (const p of truss.startPins) {
+            yield {i, p};
+            i++;
+        }
+    }
+
+    *getEditPins() {
+        const truss = this.scene.truss;
+        let i = truss.startPins.length;
+        for (const p of truss.editPins) {
+            yield {i, p};
+            i++;
+        }
+    }
+
+    getPin(pin: number): Point2D {
+        const truss = this.scene.truss;
+        if (pin < -truss.fixedPins.length) {
+            throw new Error(`Unkown pin index ${pin}`);
+        } else if (pin < 0) {
+            return truss.fixedPins[truss.fixedPins.length + pin];
+        } else if (pin < truss.startPins.length) {
+            return truss.startPins[pin];
+        } else if (pin - truss.startPins.length < truss.editPins.length) {
+            return truss.editPins[pin - truss.startPins.length];
+        } else {
+            throw new Error(`Unkown pin index ${pin}`);
+        }
+    }
+
+    getClosestPin(p: Point2D, maxd: number, beamStart?: number): number | undefined {
+        const truss = this.scene.truss;
+        // TODO: acceleration structures. Probably only matters once we have 1000s of pins?
+        const block = new Set<number>();
+        let res = undefined;
+        let resd = maxd;
+        if (beamStart !== undefined) {
+            for (const b of truss.startBeams) {
+                if (b.p1 === beamStart) {
+                    block.add(b.p2);
+                } else if (b.p2 === beamStart) {
+                    block.add(b.p1);
+                }
+            }
+            for (const b of truss.editBeams) {
+                if (b.p1 === beamStart) {
+                    block.add(b.p2);
+                } else if (b.p2 === beamStart) {
+                    block.add(b.p1);
+                }
+            }
+        }
+        for (let i = 0; i < truss.fixedPins.length; i++) {
+            const d = pointDistance(p, truss.fixedPins[i]);
+            if (d < resd) {
+                res = i - truss.fixedPins.length;
+                resd = d;
+            }
+        }
+        for (let i = 0; i < truss.startPins.length; i++) {
+            const d = pointDistance(p, truss.startPins[i]);
+            if (d < resd) {
+                res = i;
+                resd = d;
+            }
+        }
+        for (let i = 0; i < truss.editPins.length; i++) {
+            const d = pointDistance(p, truss.editPins[i]);
+            if (d < resd) {
+                res = i + truss.startPins.length;
+                resd = d;
+            }
+        }
+        return res;
+    }
+
+    // Scene mutation methods
+
+    undo(ec: ElementContext): void {
+        const a = this.scene.undoStack.pop();
+        if (a === undefined) {
+            throw new Error("no action to undo");
+        }
+        this.undoAction(a, ec);
+        this.scene.redoStack.push(a);
+    }
+
+    redo(ec: ElementContext): void {
+        const a = this.scene.redoStack.pop();
+        if (a === undefined) {
+            throw new Error("no action to redo");
+        }
+        this.doAction(a, ec);
+        this.scene.undoStack.push(a);
+    }
+
+    private action(a: TrussAction, ec: ElementContext): void {
+        this.scene.redoStack = [a];
+        this.redo(ec);    // TODO: Is this too clever?
+    }
+
+    addBeam(
+        p1: number,
+        p2: number,
+        ec: ElementContext,
+    ): void {
+        this.action({
+            type: "add_beam",
+            p1,
+            p2,
+            m: this.editMaterial,
+            w: this.editWidth,
+            l: undefined,
+            deck: this.editDeck
+        }, ec);
+    }
+
+    addPin(pin: Point2D, ec: ElementContext): void {
+        this.action({type: "add_pin", pin}, ec);
+    }
+
+    addPinAndBeam(
+        pin: Point2D,
+        p2: number,
+        ec: ElementContext,
+    ): void {
+        const p1 = this.scene.truss.editPins.length;
+        this.action({type: "composite", actions: [
+            { type: "add_pin", pin},
+            {
+                type: "add_beam",
+                p1,
+                p2,
+                m: this.editMaterial,
+                w: this.editWidth,
+                l: undefined,
+                deck: this.editDeck
+            },
+        ]}, ec);
+    }
+};
+
+/*
 export function sceneMethod(scene: Scene): ODEMethod {
     const truss = scene.truss;
     
@@ -362,7 +507,7 @@ export function sceneMethod(scene: Scene): ODEMethod {
     const beams = [...truss.startBeams, ...truss.editBeams].map((beam: Beam): SimulationBeam => {
         const p1 = beam.p1;
         const p2 = beam.p2;
-        const l = pointDistance(getPin(truss, p1), getPin(truss, p2));
+        const l = pointDistance(scene.getPin(p1), scene.getPin(p2));
         const m = l * beam.w * materials[beam.m].density;
         if (p1 < mobilePins) {
             mass[p1] += m * 0.5;
@@ -639,7 +784,7 @@ export function sceneMethod(scene: Scene): ODEMethod {
         }
     });
 }
-/*
+
 export function sceneRenderer(scene: Scene): TrussRender {
     const truss = scene.truss;
     const materials = truss.materials;
@@ -707,36 +852,158 @@ export function sceneRenderer(scene: Scene): TrussRender {
 }
 */
 
-function drawPin(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox) {
+type CreateBeamPinState = {
+    scene: Scene,
+    i: number,
+    drag?: { p: Point2D, i?: number },
+};
+
+function createBeamPinOnDraw(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, state: CreateBeamPinState) {
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "black";
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
     ctx.strokeRect(box.left + 1, box.top + 1, box.width - 2, box.height - 2);
+    
+    if (state.drag === undefined) {
+        return;
+    }
+    const pin = state.scene.getPin(state.i);
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(pin[0], pin[1]);
+    if (state.drag.i !== undefined) {
+        const p = state.scene.getPin(state.drag.i);
+        ctx.lineTo(p[0], p[1]);
+    } else {
+        ctx.lineTo(state.drag.p[0], state.drag.p[1]);
+    }
+    ctx.stroke();
 }
 
-function CreateBeamPin(truss: Truss, pin: number): PositionLayout {
-    const p = getPin(truss, pin);
-    return Position(p[0] - 8, p[1] - 8, 16, 16)
-        .onDraw(drawPin);
+function createBeamPinOnPan(ps: Array<PanPoint>, ec: ElementContext, state: CreateBeamPinState) {
+    const i = state.scene.getClosestPin(ps[0].curr, 16, state.i);
+    state.drag = {
+        p: ps[0].curr,
+        i,
+    };
+    ec.requestDraw();
+}
+
+function createBeamPinOnPanEnd(ec: ElementContext, state: CreateBeamPinState) {
+    if (state.drag === undefined) {
+        throw new Error("No drag state OnPanEnd");
+    }
+    if (state.drag.i === undefined) {
+        state.scene.addPinAndBeam(state.drag.p, state.i, ec);
+    } else if (!state.scene.beamExists(state.drag.i, state.i)) {
+        // TODO: replace existing beam if one exists (and is editable).
+        state.scene.addBeam(state.drag.i, state.i, ec);
+    }
+    state.drag = undefined;
+}
+
+function CreateBeamPin(scene: Scene, i: number, p: Point2D): PositionLayout<any, any> {
+    // If we had state that was passed to all handlers, then we could avoid allocating new handlers per Element.
+    return Position<CreateBeamPinState>(p[0] - 8, p[1] - 8, 16, 16, { scene, i })
+        .onDraw(createBeamPinOnDraw)
+        .onPan(createBeamPinOnPan)
+        .onPanEnd(createBeamPinOnPanEnd);
+}
+
+function AddTrussEditablePins(scene: Scene): LayoutTakesWidthAndHeight {
+    const children = [];
+    for (const p of scene.getEditPins()) {
+        children.push(CreateBeamPin(scene, p.i, p.p));
+    }
+    const e = Relative(...children);
+
+    scene.onAddPin((editIndex: number, pin: number, p: Point2D, ec: ElementContext) => {
+        console.log(`adding Element for pin ${pin} at child[${editIndex}], (${p[0]}, ${p[1]})`);
+        addChild(e, CreateBeamPin(scene, pin, p), ec, editIndex);
+        ec.requestLayout();
+    });
+    scene.onRemovePin((editIndex: number, pin: number, ec: ElementContext) => {
+        console.log(`removing Element for pin ${pin} at child[${editIndex}]`);
+        removeChild(e, editIndex, ec);
+        ec.requestLayout();
+    });
+
+    // TODO: e.onDetach for removeing pin observers.
+    return e;
+}
+
+function AddTrussUneditablePins(scene: Scene): LayoutTakesWidthAndHeight {
+    const children = [];
+    for (const p of scene.getUneditablePins()) {
+        children.push(CreateBeamPin(scene, p.i, p.p));
+    }
+    return Relative(...children);
 }
 
 function AddTrussLayer(scene: Scene): LayoutTakesWidthAndHeight {
-    const truss = scene.truss;
-    const minp = minPin(truss);
-    const maxp = maxPin(truss);
-    const children = new Array<PositionLayout>(maxp - minp);
-    for (let i = minp; i < maxp; i++) {
-        children[i - minp] = CreateBeamPin(truss, i);
-    }
-    return Relative(...children).onDraw((ctx: CanvasRenderingContext2D) => {
-        ctx.lineWidth = 2;
-        ctx.lineCap = "round";
-        ctx.strokeStyle = "black";
-    });
+    return Layer(
+        AddTrussUneditablePins(scene),
+        AddTrussEditablePins(scene),
+    );
 }
 
-export function SceneElement(scene: Scene): LayoutHasWidthAndHeight {
+function trussLayerOnDraw(ctx: CanvasRenderingContext2D, _box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, scene: Scene) {
+    for (const b of scene.getStartBeams()) {
+        ctx.lineWidth = b.w;
+        ctx.lineCap = "round";
+        ctx.strokeStyle = scene.getMaterial(b.m).style;
+        ctx.beginPath();
+        const p1 = scene.getPin(b.p1);
+        const p2 = scene.getPin(b.p2);
+        ctx.moveTo(p1[0], p1[1]);
+        ctx.lineTo(p2[0], p2[1]);
+        ctx.stroke();
+    }
+    for (const b of scene.getEditBeams()) {
+        ctx.lineWidth = b.w;
+        ctx.lineCap = "round";
+        ctx.strokeStyle = scene.getMaterial(b.m).style;
+        ctx.beginPath();
+        const p1 = scene.getPin(b.p1);
+        const p2 = scene.getPin(b.p2);
+        ctx.moveTo(p1[0], p1[1]);
+        ctx.lineTo(p2[0], p2[1]);
+        ctx.stroke();
+    }
+}
+
+function TrussLayer(scene: Scene): LayoutTakesWidthAndHeight {
+    return Fill(scene).onDraw(trussLayerOnDraw);
+}
+
+// TODO: Take Scene as state instead of SceneJSON?
+function drawTerrain(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, vp: LayoutBox, state: SceneJSON) {
+    const terrain = state.terrain;
+    const hmap = terrain.hmap;
+    const pitch = state.width / (hmap.length - 1);
+    const left = vp.left - box.left;
+    const right = left + vp.width;
+    const begin = Math.max(Math.min(Math.floor(left / pitch), hmap.length - 1), 0);
+    const end = Math.max(Math.min(Math.ceil(right / pitch), hmap.length - 1), 0);
+    ctx.fillStyle = terrain.style;
+    ctx.beginPath();
+    ctx.moveTo(box.left, box.top + box.height);
+    for (let i = begin; i <= end; i++) {
+        ctx.lineTo(box.left + i * pitch, box.top + hmap[i]);
+    }
+    ctx.lineTo(box.left + box.width, box.top + box.height);
+    ctx.closePath();
+    ctx.fill();
+}
+
+export function SceneElement(sceneJSON: SceneJSON): LayoutHasWidthAndHeight {
+    const scene = new Scene(sceneJSON);
     return Box(
-        scene.width, scene.height,
+        sceneJSON.width, sceneJSON.height,
         Layer(
-            Fill().onDraw(drawTerrain(scene)),
+            Fill(sceneJSON).onDraw(drawTerrain),
+            TrussLayer(scene),
             AddTrussLayer(scene),
         ),
     );

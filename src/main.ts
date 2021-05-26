@@ -1,19 +1,29 @@
 // Copyright Charles Dueck 2020
 
 
-import { Scene, SceneElement } from "./scene.js";
+import { SceneJSON, SceneElement } from "./scene.js";
 import { RootLayout, Scroll, Border } from "./ui/node.js"
 //import { RootLayout, Fill, Border } from "./ui/node.js"
 
-const scene : Scene = {
+const scene : SceneJSON = {
     truss: {
         fixedPins: [[0, 512], [128, 512], [1920, 512], [2048, 512]],
         startPins: [],
         editPins: [],
-        startBeams: [],
+        startBeams: [
+            { p1: -4, p2: -3, m: 0, w: 1, deck: true },
+            { p1: -2, p2: -1, m: 0, w: 1, deck: true },
+        ],
         editBeams: [],
         discs: [],
-        materials: [],
+        materials: [
+            {   // Rubber.
+                E: 70000000.0,
+                style: "black",
+                density: 1200.0,
+                friction: 0.9,
+            },
+        ],
     },
     terrain: {
         hmap: [512, 512, 576, 640, 672, 688, 688, 768, 768, 768, 768, 688, 672, 640, 576, 512, 512],
@@ -23,6 +33,8 @@ const scene : Scene = {
     height: 1024,
     width: 2048,
     g: [0, 128],
+    undoStack: [],
+    redoStack: [],
 };
 
 const canvas = document.getElementById("canvas");

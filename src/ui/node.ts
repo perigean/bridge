@@ -9,6 +9,7 @@ export type LayoutBox = {
     height: number;
 };
 
+// TODO: Replace use of any with unknown.
 // TODO: Pass ElementContext along with layout, so that we can have dynamic layouts.
 
 export interface ElementContext {
@@ -16,39 +17,39 @@ export interface ElementContext {
     requestLayout(): void;
 };
 
-type StatelessHandler = (ec: ElementContext) => void;
-export type OnDetachHandler = (e: Element<any, any>) => void;
-export type OnDrawHandler = (ctx: CanvasRenderingContext2D, box: LayoutBox, ec: ElementContext, vp: LayoutBox) => void;
+type ParameterlessHandler<State> = (ec: ElementContext, state: State) => void;
+export type OnDetachHandler<State> = (e: Element<any, any, State>, state: State) => void;
+export type OnDrawHandler<State> = (ctx: CanvasRenderingContext2D, box: LayoutBox, ec: ElementContext, vp: LayoutBox, state: State) => void;
 
-type OnTouchBeginHandler = (id: number, p: Point2D, ec: ElementContext) => void;
+type OnTouchBeginHandler<State> = (id: number, p: Point2D, ec: ElementContext, state: State) => void;
 type TouchMove = {
     readonly id: number;
     readonly p: Point2D;
 };
-type OnTouchMoveHandler = (ts: Array<TouchMove>, ec: ElementContext) => void;
-type OnTouchEndHandler = (id: number, ec: ElementContext) => void;
+type OnTouchMoveHandler<State> = (ts: Array<TouchMove>, ec: ElementContext, state: State) => void;
+type OnTouchEndHandler<State> = (id: number, ec: ElementContext, state: State) => void;
 
-export type OnTapHandler = (p: Point2D, ec: ElementContext) => void;
+export type OnTapHandler<State> = (p: Point2D, ec: ElementContext, state: State) => void;
 export type PanPoint = {
     prev: Point2D;
     curr: Point2D;
 };
-export type OnPanHandler = (ps: Array<PanPoint>, ec: ElementContext) => void;
+export type OnPanHandler<State> = (ps: Array<PanPoint>, ec: ElementContext, state: State) => void;
 // TODO: Pass touch size down with touch events (instead of scale?)
 // Is that enough? Probably we will always want a transoformation matrix.
 // But enough for now, so just do that.
 
-class TouchGesture {
-    onTapHandler?: OnTapHandler;
-    onPanHandler?: OnPanHandler;
-    onPanBeginHandler?: StatelessHandler;
-    onPanEndHandler?: StatelessHandler;
+class TouchGesture<State> {
+    onTapHandler?: OnTapHandler<State>;
+    onPanHandler?: OnPanHandler<State>;
+    onPanBeginHandler?: ParameterlessHandler<State>;
+    onPanEndHandler?: ParameterlessHandler<State>;
 
     private active: Map<number, Point2D>;
     private pans: Map<number, PanPoint>;
-    readonly onTouchBeginHandler: OnTouchBeginHandler;
-    readonly onTouchMoveHandler: OnTouchMoveHandler;
-    readonly onTouchEndHandler: OnTouchEndHandler;
+    readonly onTouchBeginHandler: OnTouchBeginHandler<State>;
+    readonly onTouchMoveHandler: OnTouchMoveHandler<State>;
+    readonly onTouchEndHandler: OnTouchEndHandler<State>;
     
     constructor() {
         this.active = new Map();
@@ -56,7 +57,7 @@ class TouchGesture {
         this.onTouchBeginHandler = (id: number, p: Point2D, _: ElementContext) => {
             this.active.set(id, p);
         };
-        this.onTouchMoveHandler = (ts: TouchMove[], ec: ElementContext) => {
+        this.onTouchMoveHandler = (ts: TouchMove[], ec: ElementContext, state: State) => {
             for (const t of ts) {
                 const a = this.active.get(t.id);
                 if (a != undefined) {
@@ -72,7 +73,7 @@ class TouchGesture {
                 const p = this.pans.get(t.id);
                 if (p !== undefined) {
                     if (this.pans.size === 0 && this.onPanBeginHandler !== undefined) {
-                        this.onPanBeginHandler(ec);
+                        this.onPanBeginHandler(ec, state);
                     }
                     this.pans.set(t.id, {
                         prev: p.curr,
@@ -81,17 +82,17 @@ class TouchGesture {
                 }
             }
             if (this.pans.size > 0 && this.onPanHandler !== undefined) {
-                this.onPanHandler([...this.pans.values()], ec);
+                this.onPanHandler([...this.pans.values()], ec, state);
             }
         };
-        this.onTouchEndHandler = (id: number, ec: ElementContext) => {
+        this.onTouchEndHandler = (id: number, ec: ElementContext, state: State) => {
             const a = this.active.get(id);
             if (a !== undefined && this.onTapHandler !== undefined) {
-                this.onTapHandler(a, ec);
+                this.onTapHandler(a, ec, state);
             }
             this.active.delete(id);
             if (this.pans.delete(id) && this.pans.size === 0 && this.onPanEndHandler !== undefined) {
-                this.onPanEndHandler(ec);
+                this.onPanEndHandler(ec, state);
             }
         };
     }
@@ -104,9 +105,9 @@ interface StaticArray<T> {
     [Symbol.iterator](): IterableIterator<T>;
 };
 
-type ChildConstraint<LayoutType extends string> = Element<LayoutType, any> | StaticArray<Element<LayoutType, any>> | undefined;
+type ChildConstraint<LayoutType extends string> = Element<LayoutType, any, any> | StaticArray<Element<LayoutType, any, any>> | undefined;
 
-function initTouchGesture(e: Element<any, any>): TouchGesture {
+function initTouchGesture<State>(e: Element<any, any, State>): TouchGesture<State> {
     if (e.touchGesture !== undefined) {
         return e.touchGesture;
     }
@@ -130,25 +131,27 @@ function clamp(x: number, min: number, max: number): number {
     }
 }
 
-class Element<LayoutType extends string, Child extends ChildConstraint<string>> {
+class Element<LayoutType extends string, Child extends ChildConstraint<string>, State> {
     layoutType: LayoutType;
     child: Child;
     left: number;
     top: number;
     width: number;
     height: number;
+    state: State;
 
-    constructor(layoutType: LayoutType, child: Child) {
+    constructor(layoutType: LayoutType, state: State, child: Child) {
         this.layoutType = layoutType;
         this.child = child;
         this.left = NaN;
         this.top = NaN;
         this.width = NaN;
         this.height = NaN;
+        this.state = state;
     }
 
-    onDrawHandler?: OnDrawHandler;
-    onDraw(handler: OnDrawHandler): this {
+    onDrawHandler?: OnDrawHandler<State>;
+    onDraw(handler: OnDrawHandler<State>): this {
         if (this.onDrawHandler !== undefined) {
             throw new Error('onDraw already set');
         }
@@ -156,12 +159,12 @@ class Element<LayoutType extends string, Child extends ChildConstraint<string>> 
         return this;
     }
 
-    onTouchBeginHandler?: OnTouchBeginHandler;
-    onTouchMoveHandler?: OnTouchMoveHandler;
-    onTouchEndHandler?: OnTouchEndHandler;
+    onTouchBeginHandler?: OnTouchBeginHandler<State>;
+    onTouchMoveHandler?: OnTouchMoveHandler<State>;
+    onTouchEndHandler?: OnTouchEndHandler<State>;
 
-    touchGesture?: TouchGesture;
-    onTap(handler: OnTapHandler): this {
+    touchGesture?: TouchGesture<State>;
+    onTap(handler: OnTapHandler<State>): this {
         this.touchGesture = initTouchGesture(this);
         if (this.touchGesture.onTapHandler !== undefined) {
             throw new Error('onTap already set');
@@ -169,7 +172,7 @@ class Element<LayoutType extends string, Child extends ChildConstraint<string>> 
         this.touchGesture.onTapHandler = handler;
         return this;
     }
-    onPan(handler: OnPanHandler): this {
+    onPan(handler: OnPanHandler<State>): this {
         this.touchGesture = initTouchGesture(this);
         if (this.touchGesture.onPanHandler !== undefined) {
             throw new Error('onPan already set');
@@ -177,7 +180,7 @@ class Element<LayoutType extends string, Child extends ChildConstraint<string>> 
         this.touchGesture.onPanHandler = handler;
         return this;
     }
-    onPanBegin(handler: StatelessHandler): this {
+    onPanBegin(handler: ParameterlessHandler<State>): this {
         this.touchGesture = initTouchGesture(this);
         if (this.touchGesture.onPanBeginHandler !== undefined) {
             throw new Error('onPanBegin already set');
@@ -185,7 +188,7 @@ class Element<LayoutType extends string, Child extends ChildConstraint<string>> 
         this.touchGesture.onPanBeginHandler = handler;
         return this;
     }
-    onPanEnd(handler: StatelessHandler): this {
+    onPanEnd(handler: ParameterlessHandler<State>): this {
         this.touchGesture = initTouchGesture(this);
         if (this.touchGesture.onPanEndHandler !== undefined) {
             throw new Error('onPanEnd already set');
@@ -194,8 +197,8 @@ class Element<LayoutType extends string, Child extends ChildConstraint<string>> 
         return this;
     }
 
-    onDetachHandler?: OnDetachHandler | Array<OnDetachHandler>;
-    onDetach(handler: OnDetachHandler): this {
+    onDetachHandler?: OnDetachHandler<State> | Array<OnDetachHandler<State>>;
+    onDetach(handler: OnDetachHandler<State>): this {
         if (this.onDetachHandler === undefined || this.onDetachHandler === handler) {
             this.onDetachHandler = handler;
         } else if (Array.isArray(this.onDetachHandler)) {
@@ -207,7 +210,7 @@ class Element<LayoutType extends string, Child extends ChildConstraint<string>> 
         }
         return this;
     }
-    removeOnDetach(handler: OnDetachHandler): void {
+    removeOnDetach(handler: OnDetachHandler<State>): void {
         if (Array.isArray(this.onDetachHandler)) {
             const i = this.onDetachHandler.indexOf(handler);
             if (i >= 0) {
@@ -220,8 +223,8 @@ class Element<LayoutType extends string, Child extends ChildConstraint<string>> 
     }
 };
 
-export function addChild(e: Element<any, StaticArray<Element<any, any>>>, child: Element<any, any>, ec: ElementContext, index?: number) {
-    const children = new Array<Element<any, any>>(e.child.length + 1);
+export function addChild(e: Element<any, StaticArray<Element<any, any, any>>, any>, child: Element<any, any, any>, ec: ElementContext, index?: number) {
+    const children = new Array<Element<any, any, any>>(e.child.length + 1);
     let i = 0;
     let j = 0;
     for (; i < e.child.length; i++) {
@@ -237,16 +240,16 @@ export function addChild(e: Element<any, StaticArray<Element<any, any>>>, child:
     ec.requestLayout();
 }
 
-function callDetachListeners(root: Element<any, any>) {
+function callDetachListeners(root: Element<any, any, any>) {
     const stack = [root];
     while (stack.length > 0) {
-        const e = stack.pop() as Element<any, any>;
+        const e = stack.pop() as Element<any, any, any>;
         if (Array.isArray(e.onDetachHandler)) {
             for (const handler of e.onDetachHandler) {
-                handler(e);
+                handler(e, e.state);
             }
         } else if (e.onDetachHandler !== undefined) {
-            e.onDetachHandler(e);
+            e.onDetachHandler(e, e.state);
         }
         if (e.child === undefined) {
             // No children, so no more work to do.
@@ -258,8 +261,8 @@ function callDetachListeners(root: Element<any, any>) {
     }
 }
 
-export function removeChild(e: Element<any, StaticArray<Element<any, any>>>, index: number, ec: ElementContext) {
-    const children = new Array<Element<any, any>>(e.child.length - 1);
+export function removeChild(e: Element<any, StaticArray<Element<any, any, any>>, any>, index: number, ec: ElementContext) {
+    const children = new Array<Element<any, any, any>>(e.child.length - 1);
     let j = 0;
     for (let i = 0; i < e.child.length; i++) {
         if (i === index) {
@@ -272,43 +275,43 @@ export function removeChild(e: Element<any, StaticArray<Element<any, any>>>, ind
     ec.requestLayout();
 }
 
-abstract class WPHPLayout<Child extends ChildConstraint<any>> extends Element<'wphp', Child> {
-    constructor(child: Child) {
-        super('wphp', child);
+abstract class WPHPLayout<Child extends ChildConstraint<any>, State> extends Element<'wphp', Child, State> {
+    constructor(state: State, child: Child) {
+        super('wphp', state, child);
     }
     abstract layout(left: number, top: number, width: number, height: number): void;
 };
 
-abstract class WPHSLayout<Child extends ChildConstraint<any>> extends Element<'wphs', Child> {
-    constructor(child: Child) {
-        super('wphs', child);
+abstract class WPHSLayout<Child extends ChildConstraint<any>, State> extends Element<'wphs', Child, State> {
+    constructor(state: State, child: Child) {
+        super('wphs', state, child);
     }
     abstract layout(left: number, top: number, width: number): void;
 };
 
-abstract class WSHPLayout<Child extends ChildConstraint<any>> extends Element<'wshp', Child> {
-    constructor(child: Child) {
-        super('wshp', child);
+abstract class WSHPLayout<Child extends ChildConstraint<any>, State> extends Element<'wshp', Child, State> {
+    constructor(state: State, child: Child) {
+        super('wshp', state, child);
     }
     abstract layout(left: number, top: number, height: number): void;
 };
 
-abstract class WSHSLayout<Child extends ChildConstraint<any>> extends Element<'wshs', Child> {
-    constructor(child: Child) {
-        super('wshs', child);
+abstract class WSHSLayout<Child extends ChildConstraint<any>, State> extends Element<'wshs', Child, State> {
+    constructor(state: State, child: Child) {
+        super('wshs', state, child);
     }
     abstract layout(left: number, top: number): void;
 };
 
-export type LayoutHasWidthAndHeight = WSHSLayout<any>;
-export type LayoutTakesWidthAndHeight = WPHPLayout<any>;
+export type LayoutHasWidthAndHeight = WSHSLayout<any, any>;
+export type LayoutTakesWidthAndHeight = WPHPLayout<any, any>;
 
-
-class FlexLayout extends Element<'flex', WPHPLayout<any>> {
+/*
+class FlexLayout<State> extends Element<'flex', WPHPLayout<any, any>, State> {
     size: number;
     grow: number;
-    constructor(size: number, grow: number, child: WPHPLayout<any>) {
-        super('flex', child);
+    constructor(size: number, grow: number, state: State, child: WPHPLayout<any, any>) {
+        super('flex', state, child);
         this.size = size;
         this.grow = grow;
     }
@@ -320,13 +323,13 @@ class FlexLayout extends Element<'flex', WPHPLayout<any>> {
         this.child.layout(left, top, width, height);
     }
 };
-
-function drawElementTree(ctx: CanvasRenderingContext2D, root: Element<any, any>, ec: ElementContext, vp: LayoutBox) {
+*/
+function drawElementTree(ctx: CanvasRenderingContext2D, root: Element<any, any, any>, ec: ElementContext, vp: LayoutBox) {
     const stack = [root];
     while (stack.length > 0) {
-        const e = stack.pop() as Element<any, any>;
+        const e = stack.pop() as Element<any, any, any>;
         if (e.onDrawHandler) {
-            e.onDrawHandler(ctx, e, ec, vp);
+            e.onDrawHandler(ctx, e, ec, vp, e.state);
         }
         if (e.child === undefined) {
             // No children, so no more work to do.
@@ -341,17 +344,17 @@ function drawElementTree(ctx: CanvasRenderingContext2D, root: Element<any, any>,
     }
 }
 
-function clearAndDrawElementTree(ctx: CanvasRenderingContext2D, root: Element<any, any>, ec: ElementContext, vp: LayoutBox) {
+function clearAndDrawElementTree(ctx: CanvasRenderingContext2D, root: Element<any, any, any>, ec: ElementContext, vp: LayoutBox) {
     ctx.fillStyle = "white";
     ctx.fillRect(root.left, root.top, root.width, root.height);
     drawElementTree(ctx, root, ec, vp);
 }
 
-type HasTouchHandlers = {
-    onTouchBeginHandler: OnTouchBeginHandler;
-    onTouchMoveHandler: OnTouchMoveHandler;
-    onTouchEndHandler: OnTouchEndHandler;
-} & Element<any, any>;
+type HasTouchHandlers<State> = {
+    onTouchBeginHandler: OnTouchBeginHandler<State>;
+    onTouchMoveHandler: OnTouchMoveHandler<State>;
+    onTouchEndHandler: OnTouchEndHandler<State>;
+} & Element<any, any, State>;
 
 class Debouncer {
     bounce: () => void;
@@ -376,18 +379,18 @@ class Debouncer {
     }
 };
 
-function findTouchTarget(root: Element<any, any>, p: Point2D): undefined | HasTouchHandlers {
+function findTouchTarget(root: Element<any, any, any>, p: Point2D): undefined | HasTouchHandlers<any> {
     const stack = [root];
     const x = p[0];
     const y = p[1];
     while (stack.length > 0) {
-        const e = stack.pop() as Element<any, any>;
+        const e = stack.pop() as Element<any, any, any>;
         if (x < e.left || x >= e.left + e.width || y < e.top || y >= e.top + e.height) {
             // Outside e, skip.  
             continue;
         }
         if (e.onTouchBeginHandler !== undefined && e.onTouchMoveHandler !== undefined && e.onTouchEndHandler !== undefined) {
-            return e as HasTouchHandlers; // TODO: Why can't type inference figure this out?
+            return e as HasTouchHandlers<any>; // TODO: Why can't type inference figure this out?
         }
         if (e.child === undefined) {
             // No children, so no more work to do.
@@ -408,7 +411,7 @@ type TARGET_NONE = 2;
 const TARGET_NONE = 2;
 
 export class RootLayout implements ElementContext {
-    child: WPHPLayout<any>;
+    child: WPHPLayout<any, any>;
     canvas: HTMLCanvasElement;
     ctx: CanvasRenderingContext2D;
     resize: ResizeObserver;
@@ -418,13 +421,13 @@ export class RootLayout implements ElementContext {
     debounceLayout: Debouncer;
     debounceDraw: Debouncer;
 
-    private touchTargets: Map<number, HasTouchHandlers | TARGET_ROOT | TARGET_NONE>;
-    private touchTargetDetached: OnDetachHandler;
+    private touchTargets: Map<number, HasTouchHandlers<any> | TARGET_ROOT | TARGET_NONE>;
+    private touchTargetDetached: OnDetachHandler<any>;
     private touchStart: (evt: TouchEvent) => void; 
     private touchMove: (evt: TouchEvent) => void;
     private touchEnd: (evt: TouchEvent) => void;
 
-    constructor(canvas: HTMLCanvasElement, child: WPHPLayout<any>) {
+    constructor(canvas: HTMLCanvasElement, child: WPHPLayout<any, any>) {
         this.child = child;
         this.canvas = canvas;
         const ctx = canvas.getContext("2d", {alpha: false});
@@ -471,7 +474,7 @@ export class RootLayout implements ElementContext {
         this.requestDraw = this.debounceDraw.bounce;
 
         this.touchTargets = new Map();
-        this.touchTargetDetached = (e: Element<any, any>) => {
+        this.touchTargetDetached = (e: Element<any, any, any>) => {
             let foundTarget = false;
             for (const [k, v] of this.touchTargets) {
                 if (v === e) {
@@ -502,7 +505,7 @@ export class RootLayout implements ElementContext {
                     preventDefault = true;
                     this.touchTargets.set(t.identifier, target);
                     target.onDetach(this.touchTargetDetached);
-                    target.onTouchBeginHandler(t.identifier, p, this /* ElementContext */);
+                    target.onTouchBeginHandler(t.identifier, p, this /* ElementContext */, target.state);
                 }
             }
             if (preventDefault) {
@@ -513,7 +516,7 @@ export class RootLayout implements ElementContext {
         };
         this.touchMove = (evt: TouchEvent) => {
             let preventDefault = false;
-            const targets = new Map<HasTouchHandlers, Array<TouchMove>>();
+            const targets = new Map<HasTouchHandlers<any>, Array<TouchMove>>();
             for (const t of evt.touches) {
                 const target = this.touchTargets.get(t.identifier);
                 if (target === undefined) {
@@ -533,7 +536,7 @@ export class RootLayout implements ElementContext {
                 }
             }
             for (const [target, ts] of targets) {
-                target.onTouchMoveHandler(ts, this /* ElementContext */);
+                target.onTouchMoveHandler(ts, this /* ElementContext */, target.state);
             }
             if (preventDefault) {
                 evt.preventDefault();
@@ -552,7 +555,7 @@ export class RootLayout implements ElementContext {
                 if (target !== TARGET_ROOT && target !== TARGET_NONE) {
                     preventDefault = true;
                     target.removeOnDetach(this.touchTargetDetached);
-                    target.onTouchEndHandler(id, this /* ElementContext */);
+                    target.onTouchEndHandler(id, this /* ElementContext */, target.state);
                 }
             }
             if (preventDefault) {
@@ -597,16 +600,16 @@ export class RootLayout implements ElementContext {
 
 // TODO: convert to use Affine transform.
 
-class ScrollLayout extends WPHPLayout<undefined> {
+class ScrollLayout extends WPHPLayout<undefined, undefined> {
     // ScrollLayout has to intercept all events to make sure any locations are updated by
     // the scroll position, so child is undefined, and all events are forwarded to scroller.
-    scroller: WSHSLayout<any>;
+    scroller: WSHSLayout<any, any>;
     scroll: Point2D;
     zoom: number;
     zoomMax: number;
-    private touchTargets: Map<number, HasTouchHandlers | TARGET_ROOT | TARGET_NONE>;
+    private touchTargets: Map<number, HasTouchHandlers<unknown> | TARGET_ROOT | TARGET_NONE>;
     private touchScroll: Map<number, { prev: Point2D, curr: Point2D }>;
-    private touchTargetDetached: OnDetachHandler;
+    private touchTargetDetached: OnDetachHandler<unknown>;
 
     private updateScroll() {
         const ts = [...this.touchScroll.values()];
@@ -655,16 +658,16 @@ class ScrollLayout extends WPHPLayout<undefined> {
         ];
     }
 
-    constructor(child: WSHSLayout<any>, scroll: Point2D, zoom: number, zoomMax: number) {
+    constructor(child: WSHSLayout<any, any>, scroll: Point2D, zoom: number, zoomMax: number) {
         // TODO: min zoom;
-        super(undefined);
+        super(undefined, undefined);
         this.scroller = child;
         this.scroll = scroll;
         this.zoom = zoom;
         this.zoomMax = zoomMax;
         this.touchTargets = new Map();
         this.touchScroll = new Map();
-        this.touchTargetDetached = (e: Element<any, any>) => {
+        this.touchTargetDetached = (e: Element<any, any, any>) => {
             let foundTarget = false;
             for (const [k, v] of this.touchTargets) {
                 if (v === e) {
@@ -713,11 +716,11 @@ class ScrollLayout extends WPHPLayout<undefined> {
             } else {
                 this.touchTargets.set(id, target);
                 target.onDetach(this.touchTargetDetached);
-                target.onTouchBeginHandler(id, cp, ec);
+                target.onTouchBeginHandler(id, cp, ec, target.state);
             }
         };
         this.onTouchMoveHandler = (ts: Array<TouchMove>, ec: ElementContext) => {
-            const targets = new Map<HasTouchHandlers, Array<TouchMove>>();
+            const targets = new Map<HasTouchHandlers<any>, Array<TouchMove>>();
             for (const t of ts) {
                 const target = this.touchTargets.get(t.id);
                 if (target === undefined) {
@@ -749,7 +752,7 @@ class ScrollLayout extends WPHPLayout<undefined> {
                         p: this.p2c(tts[i].p),
                     };
                 }
-                target.onTouchMoveHandler(tts, ec);
+                target.onTouchMoveHandler(tts, ec, target.state);
             }
             ec.requestDraw();
         };
@@ -767,7 +770,7 @@ class ScrollLayout extends WPHPLayout<undefined> {
                 this.touchTargets.delete(id);
                 target.removeOnDetach(this.touchTargetDetached);
                 if (target.onTouchEndHandler !== undefined) {
-                    target.onTouchEndHandler(id, ec);
+                    target.onTouchEndHandler(id, ec, target.state);
                 }
             }
         };
@@ -784,51 +787,52 @@ class ScrollLayout extends WPHPLayout<undefined> {
     }
 }
 
-export function Scroll(child: WSHSLayout<any>, scroll?: Point2D, zoom?: number, zoomMax?: number): ScrollLayout {
+export function Scroll(child: WSHSLayout<any, any>, scroll?: Point2D, zoom?: number, zoomMax?: number): ScrollLayout {
     // NB: scale of 0 is invalid anyways, so it's OK to be falsy.
     return new ScrollLayout(child, scroll || [0, 0], zoom || 1, zoomMax || 10);
 }
 
 // TODO: scrollx, scrolly
 
-class BoxLayout extends WSHSLayout<undefined> {
-    constructor(width: number, height: number) {
-        super(undefined);
+class BoxLayout<State, Child extends WPHPLayout<any, any> | undefined> extends WSHSLayout<Child, State> {
+    constructor(width: number, height: number, state: State, child: Child) {
+        super(state, child);
         this.width = width;
         this.height = height;
     }
     layout(left: number, top: number): void {
         this.left = left;
         this.top = top;
+        if (this.child !== undefined) {
+            this.child.layout(left, top, this.width, this.height);
+        }
     }
 };
 
-class BoxWithChildLayout extends WSHSLayout<WPHPLayout<any>> {
-    constructor(width: number, height: number, child:WPHPLayout<any>) {
-        super(child);
-        this.width = width;
-        this.height = height;
+export function Box<State>(width: number, height: number): WSHSLayout<undefined, undefined>;
+export function Box<State>(width: number, height: number, child: WPHPLayout<any, any>): WSHSLayout<any, undefined>;
+export function Box<State>(width: number, height: number, state: State): WSHSLayout<any, State>;
+export function Box<State>(width: number, height: number, state: State, child: WPHPLayout<any, any>): WSHSLayout<any, State>;
+export function Box<State>(width: number, height: number, first?: State | WPHPLayout<any, any>, second?: WPHPLayout<any, any>): WSHSLayout<any, State> | WSHSLayout<any, undefined> {
+    if (second === undefined) {
+        if (first === undefined) {
+            return new BoxLayout<undefined, undefined>(width, height, undefined, undefined);
+        } else if (first instanceof Element) {
+            return new BoxLayout<undefined, WPHPLayout<any, any>>(width, height, undefined, first);
+        } else {
+            return new BoxLayout<State, undefined>(width, height, first, undefined);
+        }
+    } else {
+        return new BoxLayout<State, WPHPLayout<any, any>>(width, height, first as State, second);
+        // TODO: the state should type-check.
     }
-
-    layout(left: number, top: number): void {
-        this.left = left;
-        this.top = top;
-        this.child.layout(left, top, this.width, this.height);
-    }
-};
-
-export function Box(width: number, height: number, child?: WPHPLayout<any>): WSHSLayout<any> {
-    if (child !== undefined) {
-        return new BoxWithChildLayout(width, height, child);
-    }
-    return new BoxLayout(width, height);
 }
 
-class WPHPBorderLayout extends WPHPLayout<WPHPLayout<any>> {
+class WPHPBorderLayout<State> extends WPHPLayout<WPHPLayout<any, any>, State> {
     border: number;
     style: string | CanvasGradient | CanvasPattern;
-    constructor(child: WPHPLayout<any>, border: number, style: string | CanvasGradient | CanvasPattern) {
-        super(child);
+    constructor(child: WPHPLayout<any, any>, border: number, style: string | CanvasGradient | CanvasPattern, state: State) {
+        super(state, child);
         this.border = border;
         this.style = style;
 
@@ -851,13 +855,17 @@ class WPHPBorderLayout extends WPHPLayout<WPHPLayout<any>> {
     }
 }
 
-export function Border(width: number, style: string | CanvasGradient | CanvasPattern, child: WPHPLayout<any>): WPHPLayout<any> {
-    return new WPHPBorderLayout(child, width, style);
+export function Border<State>(width: number, style: string | CanvasGradient | CanvasPattern, child: WPHPLayout<any, any>, state?: State): WPHPLayout<any, any> {
+    if (state === undefined) {
+        return new WPHPBorderLayout<undefined>(child, width, style, undefined);
+    } else {
+        return new WPHPBorderLayout<State>(child, width, style, state);
+    }
 }
 
-class FillLayout extends WPHPLayout<undefined> {
-    constructor() {
-        super(undefined);
+class FillLayout<State> extends WPHPLayout<undefined, State> {
+    constructor(state: State) {
+        super(state, undefined);
     }
 
     layout(left: number, top: number, width: number, height: number): void {
@@ -868,13 +876,19 @@ class FillLayout extends WPHPLayout<undefined> {
     }
 }
 
-export function Fill(): FillLayout {
-    return new FillLayout();
+export function Fill(): FillLayout<undefined>;
+export function Fill<State>(state: State): FillLayout<State>;
+export function Fill<State>(state?: State): FillLayout<undefined> | FillLayout<State> {
+    if (state === undefined) {
+        return new FillLayout<undefined>(undefined);
+    } else {
+        return new FillLayout<State>(state);
+    }
 }
 
-class CenterLayout extends WPHPLayout<WSHSLayout<any>> {
-    constructor(child: WSHSLayout<any>) {
-        super(child);
+class CenterLayout<State> extends WPHPLayout<WSHSLayout<any, any>, State> {
+    constructor(state: State, child: WSHSLayout<any, any>) {
+        super(state, child);
     }
 
     layout(left: number, top: number, width: number, height: number): void {
@@ -891,13 +905,13 @@ class CenterLayout extends WPHPLayout<WSHSLayout<any>> {
     }
 };
 
-export function Center(child: WSHSLayout<any>): CenterLayout {
-    return new CenterLayout(child);
+export function Center<State = undefined>(child: WSHSLayout<any, any>, state: State): CenterLayout<State> {
+    return new CenterLayout<State>(state, child);
 }
 
-class HCenterHPLayout extends WPHPLayout<WSHPLayout<any>> {
-    constructor(child: WSHPLayout<any>) {
-        super(child);
+class HCenterHPLayout<State> extends WPHPLayout<WSHPLayout<any, any>, State> {
+    constructor(state: State, child: WSHPLayout<any, any>) {
+        super(state, child);
     }
     layout(left: number, top: number, width: number, height: number): void {
         const child = this.child;
@@ -912,9 +926,9 @@ class HCenterHPLayout extends WPHPLayout<WSHPLayout<any>> {
     }
 };
 
-class HCenterHSLayout extends WPHSLayout<WSHSLayout<any>> {
-    constructor(child: WSHSLayout<any>) {
-        super(child);
+class HCenterHSLayout<State> extends WPHSLayout<WSHSLayout<any, any>, State> {
+    constructor(state: State, child: WSHSLayout<any, any>) {
+        super(state, child);
         this.height = child.height;
     }
     
@@ -930,19 +944,19 @@ class HCenterHSLayout extends WPHSLayout<WSHSLayout<any>> {
     }
 };
 
-export function HCenter(child: WSHSLayout<any>): HCenterHSLayout;
-export function HCenter(child: WSHPLayout<any>): HCenterHPLayout;
-export function HCenter(child: WSHSLayout<any> | WSHPLayout<any>): HCenterHSLayout | HCenterHPLayout {
+export function HCenter<State = undefined>(child: WSHSLayout<any, any>, state: State): HCenterHSLayout<State>;
+export function HCenter<State = undefined>(child: WSHPLayout<any, any>, state: State): HCenterHPLayout<State>;
+export function HCenter<State = undefined>(child: WSHSLayout<any, any> | WSHPLayout<any, any>, state: State): HCenterHSLayout<State> | HCenterHPLayout<State> {
     if (child.layoutType === 'wshp') {
-        return new HCenterHPLayout(child);
+        return new HCenterHPLayout<State>(state, child);
     } else {
-        return new HCenterHSLayout(child);
+        return new HCenterHSLayout<State>(state, child);
     }
 }
 
-class VCenterWPLayout extends WPHPLayout<WPHSLayout<any>> {
-    constructor(child: WPHSLayout<any>) {
-        super(child);
+class VCenterWPLayout<State> extends WPHPLayout<WPHSLayout<any, any>, State> {
+    constructor(state: State, child: WPHSLayout<any, any>) {
+        super(state, child);
     }
 
     layout(left: number, top: number, width: number, height: number): void {
@@ -958,9 +972,9 @@ class VCenterWPLayout extends WPHPLayout<WPHSLayout<any>> {
     }
 };
 
-class VCenterWSLayout extends WSHPLayout<WSHSLayout<any>> {
-    constructor(child: WSHSLayout<any>) {
-        super(child);
+class VCenterWSLayout<State> extends WSHPLayout<WSHSLayout<any, any>, State> {
+    constructor(state: State, child: WSHSLayout<any, any>) {
+        super(state, child);
         this.width = child.width;
     }
     
@@ -976,19 +990,19 @@ class VCenterWSLayout extends WSHPLayout<WSHSLayout<any>> {
     }
 };
 
-export function VCenter(child: WSHSLayout<any>): VCenterWSLayout;
-export function VCenter(child: WPHSLayout<any>): VCenterWPLayout;
-export function VCenter(child: WSHSLayout<any> | WPHSLayout<any>): VCenterWSLayout | VCenterWPLayout {
+export function VCenter<State = undefined>(child: WSHSLayout<any, any>, state: State): VCenterWSLayout<State>;
+export function VCenter<State = undefined>(child: WPHSLayout<any, any>, state: State): VCenterWPLayout<State>;
+export function VCenter<State = undefined>(child: WSHSLayout<any, any> | WPHSLayout<any, any>, state: State): VCenterWSLayout<State> | VCenterWPLayout<State> {
     if (child.layoutType === 'wphs') {
-        return new VCenterWPLayout(child);
+        return new VCenterWPLayout<State>(state, child);
     } else {
-        return new VCenterWSLayout(child);
+        return new VCenterWSLayout<State>(state, child);
     }
 }
-
-class LeftHSLayout extends WPHSLayout<WSHSLayout<any>> {
-    constructor(child: WSHSLayout<any>) {
-        super(child);
+/*
+class LeftHSLayout<State> extends WPHSLayout<WSHSLayout<any, any>, State> {
+    constructor(state: State, child: WSHSLayout<any, any>) {
+        super(state, child);
         this.height = child.height;
     }
 
@@ -1003,9 +1017,9 @@ class LeftHSLayout extends WPHSLayout<WSHSLayout<any>> {
     }
 };
 
-class LeftStackLayout extends WPHPLayout<StaticArray<WSHPLayout<any>>> {
-    constructor(children: StaticArray<WSHPLayout<any>>) {
-        super(children);
+class LeftStackLayout<State> extends WPHPLayout<StaticArray<WSHPLayout<any, any>>, State> {
+    constructor(state: State, children: StaticArray<WSHPLayout<any, any>>) {
+        super(state, children);
     }
     layout(left: number, top: number, width: number, height: number): void {
         const children = this.child;
@@ -1023,9 +1037,9 @@ class LeftStackLayout extends WPHPLayout<StaticArray<WSHPLayout<any>>> {
     }
 };
 
-class LeftFlexLayout extends WPHPLayout<StaticArray<FlexLayout>> {
-    constructor(children: StaticArray<FlexLayout>) {
-        super(children);
+class LeftFlexLayout<State> extends WPHPLayout<StaticArray<FlexLayout<any>>, State> {
+    constructor(state: State, children: StaticArray<FlexLayout<any>>) {
+        super(state, children);
     }
     layout(left: number, top: number, width: number, height: number): void {
         const children = this.child;
@@ -1104,45 +1118,62 @@ export function Right(child: WSHSLayout<any> | WSHPLayout<any>): RightHSLayout |
         return new RightHSLayout(child);
     }
 }
+*/
 
+type DebugTouchState = {
+    fill: string | CanvasGradient | CanvasPattern,
+    stroke: string | CanvasGradient | CanvasPattern,
+    taps: Array<Point2D>,
+    pans: Array<Array<PanPoint>>,
+};
 
-export function DebugTouch(width: number, height: number, fill: string | CanvasGradient | CanvasPattern, stroke: string | CanvasGradient | CanvasPattern): BoxLayout {
-    const taps: Array<Point2D> = [];
-    const pans: Array<Array<PanPoint>> = [];
-    return Box(
-        width,
-        height,
-    ).onDraw((ctx: CanvasRenderingContext2D, box: LayoutBox) => {
-        ctx.fillStyle = fill;
-        ctx.strokeStyle = stroke;
-        ctx.lineWidth = 2;
-        ctx.fillRect(box.left, box.top, box.width, box.height);
-        ctx.beginPath();
-        for (const tap of taps) {
-            ctx.moveTo(tap[0] + 16, tap[1]);
-            ctx.ellipse(tap[0], tap[1], 16, 16, 0, 0, 2 * Math.PI);
+function debugTouchOnDraw(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, state: DebugTouchState) {
+    ctx.fillStyle = state.fill;
+    ctx.strokeStyle = state.stroke;
+    ctx.lineWidth = 2;
+    ctx.fillRect(box.left, box.top, box.width, box.height);
+    ctx.beginPath();
+    for (const tap of state.taps) {
+        ctx.moveTo(tap[0] + 16, tap[1]);
+        ctx.ellipse(tap[0], tap[1], 16, 16, 0, 0, 2 * Math.PI);
+    }
+    for (const ps of state.pans) {
+        for (const p of ps) {
+            ctx.moveTo(p.prev[0], p.prev[1]);
+            ctx.lineTo(p.curr[0], p.curr[1]);
         }
-        for (const ps of pans) {
-            for (const p of ps) {
-                ctx.moveTo(p.prev[0], p.prev[1]);
-                ctx.lineTo(p.curr[0], p.curr[1]);
-            }
-        }
-        ctx.stroke();
-    }).onTap((p: Point2D, ec: ElementContext) => {
-        taps.push(p);
-        ec.requestDraw();
-    }).onPan((ps: Array<PanPoint>, ec: ElementContext) => {
-        pans.push(ps);
-        ec.requestDraw();
-    });
+    }
+    ctx.stroke();
+}
+
+function debugTouchOnTap(p: Point2D, ec: ElementContext, state: DebugTouchState) {
+    state.taps.push(p);
+    ec.requestDraw();
+}
+
+function debugTouchOnPan(ps: Array<PanPoint>, ec: ElementContext, state: DebugTouchState) {
+    state.pans.push(ps);
+    ec.requestDraw();
+}
+
+export function DebugTouch(width: number, height: number, fill: string | CanvasGradient | CanvasPattern, stroke: string | CanvasGradient | CanvasPattern): BoxLayout<DebugTouchState, undefined> {
+    const state = {
+        fill,
+        stroke,
+        taps: [],
+        pans: [],
+    };
+    return Box<DebugTouchState>(width, height, state)
+        .onDraw(debugTouchOnDraw)
+        .onTap(debugTouchOnTap)
+        .onPan(debugTouchOnPan);
 }
 
 // TODO: Top, Bottom
 
-class LayerLayout extends WPHPLayout<StaticArray<WPHPLayout<any>>> {
-    constructor(children: StaticArray<WPHPLayout<any>>) {
-        super(children);
+class LayerLayout<State> extends WPHPLayout<StaticArray<WPHPLayout<any, any>>, State> {
+    constructor(state: State, children: StaticArray<WPHPLayout<any, any>>) {
+        super(state, children);
     }
     layout(left: number, top: number, width: number, height: number): void {
         this.left = left;
@@ -1155,19 +1186,24 @@ class LayerLayout extends WPHPLayout<StaticArray<WPHPLayout<any>>> {
     }
 };
 
-export function Layer(...children: Array<WPHPLayout<any>>): LayerLayout {
-    return new LayerLayout(children);
+export function Layer<State>(state: State, ...children: Array<WPHPLayout<any, any>>): LayerLayout<State>;
+export function Layer(...children: Array<WPHPLayout<any, any>>): LayerLayout<undefined>;
+export function Layer<State>(first: State | WPHPLayout<any, any>, ...children: Array<WPHPLayout<any, any>>): LayerLayout<State> | LayerLayout<undefined> {
+    if (first instanceof Element) {
+        return new LayerLayout<undefined>(undefined, [first, ...children]);
+    }
+    return new LayerLayout<State>(first, children);
 }
 
 
-export class PositionLayout extends Element<"pos", WPHPLayout<any> | undefined> {
+export class PositionLayout<Child extends WPHPLayout<any, any> | undefined, State> extends Element<"pos", Child, State> {
     requestLeft: number;
     requestTop: number;
     requestWidth: number;
     requestHeight: number;
 
-    constructor(left: number, top: number, width: number, height: number, child: WPHPLayout<any> | undefined) {
-        super("pos", child);
+    constructor(left: number, top: number, width: number, height: number, state: State, child: Child) {
+        super("pos", state, child);
         this.requestLeft = left;
         this.requestTop = top;
         this.requestWidth = width;
@@ -1186,12 +1222,26 @@ export class PositionLayout extends Element<"pos", WPHPLayout<any> | undefined> 
 };
 
 // TODO: support statically sized children, 
-export function Position(left: number, top: number, width: number, height: number, child?: WPHPLayout<any>) {
-    return new PositionLayout(left, top, width, height, child);
+export function Position(left: number, top: number, width: number, height: number): PositionLayout<undefined, undefined>;
+export function Position<State>(left: number, top: number, width: number, height: number, state: State): PositionLayout<undefined, State>;
+export function Position(left: number, top: number, width: number, height: number, child: WPHPLayout<any, any>): PositionLayout<WPHPLayout<any, any>, undefined>;
+export function Position<State>(left: number, top: number, width: number, height: number, state: State, child: WPHPLayout<any, any>): PositionLayout<WPHPLayout<any, any>, State>;
+export function Position<State>(left: number, top: number, width: number, height: number, first?: State | WPHPLayout<any, any>, second?: WPHPLayout<any, any>) {
+    if (second === undefined) {
+        if (first === undefined) {
+            return new PositionLayout<undefined, undefined>(left, top, width, height, undefined, undefined);
+        } else if (first instanceof Element) {
+            return new PositionLayout<WPHPLayout<any, any>, undefined>(left, top, width, height, undefined, first);
+        } else {
+            return new PositionLayout<undefined, State>(left, top, width, height, first, undefined);
+        }
+    } else {
+        return new PositionLayout<WPHPLayout<any, any>, State>(left, top, width, height, first as State, second);
+    }
 }
 
-export function Draggable(left: number, top: number, width: number, height: number, child?: WPHPLayout<any>) {
-    const layout = new PositionLayout(left, top, width, height, child);
+export function Draggable(left: number, top: number, width: number, height: number, child?: WPHPLayout<any, any>) {
+    const layout = new PositionLayout<any, undefined>(left, top, width, height, undefined, child);
     return layout.onPan((ps: Array<PanPoint>, ec: ElementContext) => {
         let dx = 0;
         let dy = 0;
@@ -1231,9 +1281,9 @@ export function Draggable(left: number, top: number, width: number, height: numb
 //     }
 // };
 
-class WPHPRelativeLayout extends WPHPLayout<StaticArray<PositionLayout>> {
-    constructor(children: StaticArray<PositionLayout>) {
-        super(children);
+class WPHPRelativeLayout<State> extends WPHPLayout<StaticArray<PositionLayout<any, any>>, State> {
+    constructor(state: State, children: StaticArray<PositionLayout<any, any>>) {
+        super(state, children);
     }
     layout(left: number, top: number, width: number, height: number): void {
         this.left = left;
@@ -1246,7 +1296,11 @@ class WPHPRelativeLayout extends WPHPLayout<StaticArray<PositionLayout>> {
         }
     }
 }
-
-export function Relative(...children: Array<PositionLayout>): WPHPRelativeLayout {
-    return new WPHPRelativeLayout(children);
+export function Relative(...children: Array<PositionLayout<any, any>>): WPHPRelativeLayout<undefined>;
+export function Relative<State>(state: State, ...children: Array<PositionLayout<any, any>>): WPHPRelativeLayout<State>;
+export function Relative<State>(first: State | PositionLayout<any, any>, ...children: Array<PositionLayout<any, any>>): WPHPRelativeLayout<undefined> | WPHPRelativeLayout<State> {
+    if (first instanceof Element) {
+        return new WPHPRelativeLayout<undefined>(undefined, [first, ...children]);
+    }
+    return new WPHPRelativeLayout<State>(first, children);
 }
