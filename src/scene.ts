@@ -4,7 +4,7 @@ import { Point2D, pointDistance } from "./point.js";
 //import { ODEMethod } from "./ode.js";
 //import { Euler } from "./euler.js";
 //import { RungeKutta4 } from "./rk4.js";
-import { addChild, Box, ElementContext, Fill, Layer, LayoutBox, LayoutHasWidthAndHeight, LayoutTakesWidthAndHeight, PanPoint, Position, PositionLayout, Relative, removeChild } from "./ui/node.js";
+import { addChild, Bottom, Box, ElementContext, Fill, Flex, Layer, LayoutBox, LayoutTakesWidthAndHeight, Left, Mux, PanPoint, Position, PositionLayout, Relative, removeChild, Scroll } from "./ui/node.js";
 
 export type Beam = {
     p1: number; // Index of pin at beginning of beam.
@@ -125,7 +125,7 @@ export class Scene {
         }
     }
 
-    private doAddBeam(a: AddBeamAction) {
+    private doAddBeam(a: AddBeamAction, ec: ElementContext) {
         const truss = this.scene.truss;
         const p1 = a.p1;
         const p2 = a.p2;
@@ -146,9 +146,11 @@ export class Scene {
             throw new Error(`Beam between pins ${p1} and ${p2} already exists`);
         }
         truss.editBeams.push({p1, p2, m, w, l, deck});
+        
+        ec.requestDraw();   // TODO: have listeners, and then the UI component can do the requestDraw()
     }
     
-    private undoAddBeam(a: AddBeamAction): void {
+    private undoAddBeam(a: AddBeamAction, ec: ElementContext): void {
         const truss = this.scene.truss;
         const b = truss.editBeams.pop();
         if (b === undefined) {
@@ -157,6 +159,7 @@ export class Scene {
         if (b.p1 !== a.p1 || b.p2 !== a.p2 || b.m !== a.m || b.w != a.w || b.l !== a.l || b.deck !== a.deck) {
             throw new Error('Beam does not match');
         }
+        ec.requestDraw();   // TODO: have listeners, and then the UI component can do the requestDraw()
     }
 
     private doAddPin(a: AddPinAction, ec: ElementContext): void {
@@ -200,7 +203,7 @@ export class Scene {
     private doAction(a: TrussAction, ec: ElementContext): void {
         switch (a.type) {
             case "add_beam":
-                this.doAddBeam(a);
+                this.doAddBeam(a, ec);
                 break;
             case "add_pin":
                 this.doAddPin(a, ec);
@@ -214,7 +217,7 @@ export class Scene {
     private undoAction(a: TrussAction, ec: ElementContext): void {
         switch (a.type) {
             case "add_beam":
-                this.undoAddBeam(a);
+                this.undoAddBeam(a, ec);
                 break;
             case "add_pin":
                 this.undoAddPin(a, ec);
@@ -359,6 +362,14 @@ export class Scene {
             }
         }
         return res;
+    }
+
+    undoCount(): number {
+        return this.scene.undoStack.length;
+    }
+
+    redoCount(): number {
+        return this.scene.redoStack.length;
     }
 
     // Scene mutation methods
@@ -997,14 +1008,90 @@ function drawTerrain(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: Element
     ctx.fill();
 }
 
-export function SceneElement(sceneJSON: SceneJSON): LayoutHasWidthAndHeight {
+function drawFill(style: string | CanvasGradient | CanvasPattern) {
+    return (ctx: CanvasRenderingContext2D, box: LayoutBox) => {
+        ctx.fillStyle = style;
+        ctx.fillRect(box.left, box.top, box.width, box.height);
+    }
+}
+
+function undoButtonTap(_p: Point2D, ec: ElementContext, scene: Scene) {
+    if (scene.undoCount() > 0) {
+        scene.undo(ec);
+    }
+}
+
+function undoButtonDraw(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, scene: Scene) {
+    ctx.fillStyle = scene.undoCount() === 0 ? "gray" : "black";
+    ctx.fillRect(box.left, box.top, box.width, box.height);
+}
+
+function undoButton(scene: Scene) {
+    return Flex(64, 0, scene).onTap(undoButtonTap).onDraw(undoButtonDraw);
+}
+
+function redoButtonTap(_p: Point2D, ec: ElementContext, scene: Scene) {
+    if (scene.redoCount() > 0) {
+        scene.redo(ec);
+    }
+}
+
+function redoButtonDraw(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, scene: Scene) {
+    ctx.fillStyle = scene.redoCount() === 0 ? "gray" : "black";
+    ctx.fillRect(box.left, box.top, box.width, box.height);
+}
+
+function redoButton(scene: Scene) {
+    return Flex(64, 0, scene).onTap(redoButtonTap).onDraw(redoButtonDraw);
+}
+
+export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
     const scene = new Scene(sceneJSON);
-    return Box(
-        sceneJSON.width, sceneJSON.height,
-        Layer(
-            Fill(sceneJSON).onDraw(drawTerrain),
-            TrussLayer(scene),
-            AddTrussLayer(scene),
+
+    const muxScene = Mux(
+        ["terrain", "truss", "add_truss"],
+        ["terrain", Fill(sceneJSON).onDraw(drawTerrain)],
+        ["truss", TrussLayer(scene)],
+        ["add_truss", AddTrussLayer(scene)],
+    );
+
+    const drawR = drawFill("red");
+    const drawG = drawFill("green");
+    const drawB = drawFill("blue");
+
+    const muxTools = Mux(
+        ["undo"],
+        [
+            "undo",
+            Left(
+                undoButton(scene),
+                redoButton(scene),
+            ),
+        ],
+        ["g", Fill().onDraw(drawG)],
+        ["b", Fill().onDraw(drawB)],
+    );
+
+    return Layer(
+        Scroll(
+            Box(
+                sceneJSON.width, sceneJSON.height,
+                muxScene,
+            ),
+            undefined,
+            2,
+        ),
+        Bottom(
+            Flex(128, 0,
+                muxTools,  
+            ),
+            Flex(64, 0,
+                Left(
+                    Flex(64, 0).onDraw(drawR).onTap((_p: Point2D, ec: ElementContext) => { muxTools.set(ec, "undo"); }),
+                    Flex(64, 0).onDraw(drawG).onTap((_p: Point2D, ec: ElementContext) => { muxTools.set(ec, "g"); }),
+                    Flex(64, 0).onDraw(drawB).onTap((_p: Point2D, ec: ElementContext) => { muxTools.set(ec, "b"); }),
+                ),
+            ),
         ),
     );
 }

@@ -306,24 +306,6 @@ abstract class WSHSLayout<Child extends ChildConstraint<any>, State> extends Ele
 export type LayoutHasWidthAndHeight = WSHSLayout<any, any>;
 export type LayoutTakesWidthAndHeight = WPHPLayout<any, any>;
 
-/*
-class FlexLayout<State> extends Element<'flex', WPHPLayout<any, any>, State> {
-    size: number;
-    grow: number;
-    constructor(size: number, grow: number, state: State, child: WPHPLayout<any, any>) {
-        super('flex', state, child);
-        this.size = size;
-        this.grow = grow;
-    }
-    layout(left:number, top: number, width: number, height: number) {
-        this.left = left;
-        this.top = top;
-        this.width = width;
-        this.height = height;
-        this.child.layout(left, top, width, height);
-    }
-};
-*/
 function drawElementTree(ctx: CanvasRenderingContext2D, root: Element<any, any, any>, ec: ElementContext, vp: LayoutBox) {
     const stack = [root];
     while (stack.length > 0) {
@@ -595,9 +577,6 @@ export class RootLayout implements ElementContext {
 };
 
 // TODO: Have acceleration structures. (so hide children, and forward tap/pan/draw manually, with transform)
-// TODO: Make it zoom
-// TODO: maybe have two elements? a viewport and a HSWS with absolutely positioned children and acceleration structures
-
 // TODO: convert to use Affine transform.
 
 class ScrollLayout extends WPHPLayout<undefined, undefined> {
@@ -659,7 +638,6 @@ class ScrollLayout extends WPHPLayout<undefined, undefined> {
     }
 
     constructor(child: WSHSLayout<any, any>, scroll: Point2D, zoom: number, zoomMax: number) {
-        // TODO: min zoom;
         super(undefined, undefined);
         this.scroller = child;
         this.scroll = scroll;
@@ -999,126 +977,121 @@ export function VCenter<State = undefined>(child: WSHSLayout<any, any> | WPHSLay
         return new VCenterWSLayout<State>(state, child);
     }
 }
-/*
-class LeftHSLayout<State> extends WPHSLayout<WSHSLayout<any, any>, State> {
-    constructor(state: State, child: WSHSLayout<any, any>) {
-        super(state, child);
-        this.height = child.height;
+
+class FlexLayout<State, Child extends WPHPLayout<any, any> | undefined> extends Element<'flex', Child, State> {
+    size: number;
+    grow: number;
+    constructor(size: number, grow: number, state: State, child: Child) {
+        super('flex', state, child);
+        this.size = size;
+        this.grow = grow;
     }
-
-    layout(left: number, top: number, width: number): void {
-        const child = this.child;
-
-        this.left = left;
-        this.top = top;
-        this.width = width;
-
-        child.layout(left, top);
-    }
-};
-
-class LeftStackLayout<State> extends WPHPLayout<StaticArray<WSHPLayout<any, any>>, State> {
-    constructor(state: State, children: StaticArray<WSHPLayout<any, any>>) {
-        super(state, children);
-    }
-    layout(left: number, top: number, width: number, height: number): void {
-        const children = this.child;
-
+    layout(left:number, top: number, width: number, height: number) {
         this.left = left;
         this.top = top;
         this.width = width;
         this.height = height;
-
-        let childLeft = left;
-        for (const child of children) {
-            child.layout(childLeft, top, height);
-            childLeft += child.width;
+        if (this.child !== undefined) {
+            this.child.layout(left, top, width, height);
         }
     }
 };
 
-class LeftFlexLayout<State> extends WPHPLayout<StaticArray<FlexLayout<any>>, State> {
-    constructor(state: State, children: StaticArray<FlexLayout<any>>) {
-        super(state, children);
-    }
-    layout(left: number, top: number, width: number, height: number): void {
-        const children = this.child;
-        let sizeSum = 0;
-        let growSum = 0;
-        for (const child of children) {
-            sizeSum += child.size;
-            growSum += child.grow;
+export function Flex(size: number, grow: number): FlexLayout<undefined, undefined>;
+export function Flex<State>(size: number, grow: number, state: State): FlexLayout<State, undefined>;
+export function Flex(size: number, grow: number, child: WPHPLayout<any, any>): FlexLayout<undefined, WPHPLayout<any, any>>;
+export function Flex<State>(size: number, grow: number, state: State, child: WPHPLayout<any, any>): FlexLayout<State, WPHPLayout<any, any>>;
+export function Flex<State>(size: number, grow: number, first?: State | WPHPLayout<any, any>, second?: WPHPLayout<any, any>): FlexLayout<any, any> {
+    if (first !== undefined) {
+        if (second !== undefined) {
+            return new FlexLayout(size, grow, first, second);
+        } else if (first instanceof WPHPLayout) {
+            return new FlexLayout(size, grow, undefined, first);
+        } else {
+            return new FlexLayout(size, grow, first, undefined);
         }
-        const extra = width - sizeSum;
-        let childLeft = left;
-        for (const child of children) {
-            const childWidth = child.size + child.grow * extra / growSum;
-            child.layout(childLeft, top, childWidth, height);
-            childLeft += child.size;
-        }
-    }
-}
-
-export function Left(child: WSHSLayout<any>): WPHSLayout<any>;
-export function Left(child0: WSHPLayout<any>, ...childRest: Array<WSHPLayout<any>>): WPHPLayout<any>;
-export function Left(child0: FlexLayout, ...childRest: Array<FlexLayout>): WPHPLayout<any>;
-export function Left(child: WSHSLayout<any> | WSHPLayout<any> | FlexLayout, ..._: Array<WSHPLayout<any>> | Array<FlexLayout>): WPHSLayout<any> | WPHPLayout<any> {
-    switch (child.layoutType) {
-        case 'flex':
-            return new LeftFlexLayout(arguments);
-        case 'wshp':
-            return new LeftStackLayout(arguments);
-        case 'wshs':
-            return new LeftHSLayout(child);
-    }
-}
-
-class RightHPLayout extends WPHPLayout<WSHPLayout<any>> {
-    constructor(child: WSHPLayout<any>) {
-        super(child);
-    }
-
-    layout(left: number, top: number, width: number, height: number): void {
-        const child = this.child;
-        const childLeft = width - child.width;
-
-        this.left = left;
-        this.top = top;
-        this.width = width;
-        this.height = height;
-
-        child.layout(childLeft, top, height);
-    }
-};
-
-class RightHSLayout extends WPHSLayout<WSHSLayout<any>> {
-    constructor(child: WSHSLayout<any>) {
-        super(child);
-        this.height = child.height;
-    }
-
-    layout(left: number, top: number, width: number): void {
-        const child = this.child;
-        const childLeft = width - child.width;
-
-        this.left = left;
-        this.top = top;
-        this.width = width;
-
-        child.layout(childLeft, top);
-    }
-};
-
-export function Right(child: WSHSLayout<any>): RightHSLayout;
-export function Right(child: WSHPLayout<any>): RightHPLayout;
-export function Right(child: WSHSLayout<any> | WSHPLayout<any>): RightHSLayout | RightHPLayout {
-    if (child.layoutType === 'wshp') {
-        return new RightHPLayout(child);
     } else {
-        return new RightHSLayout(child);
+        return new FlexLayout<undefined, undefined>(size, grow, undefined, undefined);
     }
 }
-*/
+
+class LeftFlexLayout<State> extends WPHPLayout<StaticArray<FlexLayout<any, any>>, State> {
+    constructor(state: State, children: StaticArray<FlexLayout<any, any>>) {
+        super(state, children);
+    }
+
+    layout(left: number, top: number, width: number, height: number): void {
+        this.left = left;
+        this.top = top;
+        this.width = width;
+        this.height = height;
+        let sumSize = 0;
+        let sumGrow = 0;
+        for (const c of this.child) {
+            sumSize += c.size;
+            sumGrow += c.grow;
+        }
+        let childLeft = left;
+        let extra = height - sumSize;
+        for (const c of this.child) {
+            let childWidth = c.size;
+            if (c.grow !== 0) {
+                childWidth += extra * c.grow / sumGrow;
+            }
+            c.layout(childLeft, top, childWidth, height);
+            childLeft += childWidth;
+        }
+    }
+};
+
+export function Left(...children: Array<FlexLayout<any, any>>): LeftFlexLayout<undefined>
+export function Left<State>(state: State, ...children: Array<FlexLayout<any, any>>): LeftFlexLayout<State>;
+export function Left<State>(first: State | FlexLayout<any, any>, ...children: Array<FlexLayout<any, any>>): LeftFlexLayout<any> {
+    if (first instanceof FlexLayout) {
+        return new LeftFlexLayout(undefined, [first, ...children]);
+    } else {
+        return new LeftFlexLayout(first, children);
+    }
+}
+
+class BottomFlexLayout<State> extends WPHPLayout<StaticArray<FlexLayout<any, any>>, State> {
+    constructor(state: State, children: StaticArray<FlexLayout<any, any>>) {
+        super(state, children);
+    }
+
+    layout(left: number, top: number, width: number, height: number): void {
+        this.left = left;
+        this.top = top;
+        this.width = width;
+        this.height = height;
+        let sumSize = 0;
+        let sumGrow = 0;
+        for (const c of this.child) {
+            sumSize += c.size;
+            sumGrow += c.grow;
+        }
+        let childTop = top + height;
+        let extra = height - sumSize;
+        for (const c of this.child) {
+            let childHeight = c.size;
+            if (c.grow !== 0) {
+                childHeight += extra * c.grow / sumGrow;
+            }
+            childTop -= childHeight;
+            c.layout(left, childTop, width, childHeight);
+        }
+    }
+}
+
+export function Bottom(...children: Array<FlexLayout<any, any>>): BottomFlexLayout<undefined>
+export function Bottom<State>(state: State, ...children: Array<FlexLayout<any, any>>): BottomFlexLayout<State>;
+export function Bottom<State>(first: State | FlexLayout<any, any>, ...children: Array<FlexLayout<any, any>>): BottomFlexLayout<any> {
+    if (first instanceof FlexLayout) {
+        return new BottomFlexLayout(undefined, [first, ...children]);
+    } else {
+        return new BottomFlexLayout(first, children);
+    }
+}
 
 type DebugTouchState = {
     fill: string | CanvasGradient | CanvasPattern,
@@ -1169,8 +1142,6 @@ export function DebugTouch(width: number, height: number, fill: string | CanvasG
         .onPan(debugTouchOnPan);
 }
 
-// TODO: Top, Bottom
-
 class LayerLayout<State> extends WPHPLayout<StaticArray<WPHPLayout<any, any>>, State> {
     constructor(state: State, children: StaticArray<WPHPLayout<any, any>>) {
         super(state, children);
@@ -1195,6 +1166,60 @@ export function Layer<State>(first: State | WPHPLayout<any, any>, ...children: A
     return new LayerLayout<State>(first, children);
 }
 
+export type MuxKey = string | number | symbol;
+
+function muxElements(enabled: Set<MuxKey>, es: Array<[MuxKey, WPHPLayout<any, any>]>): Array<WPHPLayout<any, any>> {
+    const res = [];
+    for (const [k, v] of es) {
+        if (enabled.has(k)) {
+            res.push(v);
+        }
+    }
+    return res;
+}
+
+class MuxLayout extends WPHPLayout<StaticArray<WPHPLayout<any, any>>, undefined> {
+    private enabled: Set<MuxKey>;
+    private mux: Array<[MuxKey, WPHPLayout<any, any>]>;
+
+    constructor(enabled: Set<MuxKey>, children: Array<[MuxKey, WPHPLayout<any, any>]>) {
+        super(undefined, muxElements(enabled, children));
+        this.enabled = enabled;
+        this.mux = children;
+    }
+
+    toggle(disable: Array<MuxKey>, enable: Array<MuxKey>, ec: ElementContext) {
+        for (const k of disable) {
+            this.enabled.delete(k);
+        }
+        for (const k of enable) {
+            this.enabled.add(k);
+        }
+        this.child = muxElements(this.enabled, this.mux);
+        ec.requestLayout();
+    }
+
+    set(ec: ElementContext, ...enable: Array<MuxKey>) {
+        this.enabled = new Set(enable);
+        this.child = muxElements(this.enabled, this.mux);
+        ec.requestLayout();
+    }
+
+    layout(left: number, top: number, width: number, height: number): void {
+        this.left = left;
+        this.top = top;
+        this.width = width;
+        this.height = height;
+        for (const child of this.child) {
+            child.layout(left, top, width, height);
+        }
+    }
+};
+
+// TODO: have the keys used in Mux be part of the type.
+export function Mux(enabled: Array<MuxKey>, ...children: Array<[MuxKey, WPHPLayout<any, any>]>): MuxLayout {
+    return new MuxLayout(new Set(enabled), children);
+}
 
 export class PositionLayout<Child extends WPHPLayout<any, any> | undefined, State> extends Element<"pos", Child, State> {
     requestLeft: number;

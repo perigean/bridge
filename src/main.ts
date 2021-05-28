@@ -2,7 +2,7 @@
 
 
 import { SceneJSON, SceneElement } from "./scene.js";
-import { RootLayout, Scroll, Border } from "./ui/node.js"
+import { RootLayout, Border } from "./ui/node.js"
 //import { RootLayout, Fill, Border } from "./ui/node.js"
 
 const scene : SceneJSON = {
@@ -41,7 +41,7 @@ const canvas = document.getElementById("canvas");
 new RootLayout(
     canvas as HTMLCanvasElement,
     Border(16, "black",
-        Scroll(SceneElement(scene), undefined, 2),
+        SceneElement(scene),
     )
 );
 
