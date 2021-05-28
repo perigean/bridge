@@ -1021,9 +1021,44 @@ function undoButtonTap(_p: Point2D, ec: ElementContext, scene: Scene) {
     }
 }
 
+function drawCircleWithArrow(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, ccw: boolean) {
+    ctx.beginPath();
+    const a = ccw ? Math.PI : 0;
+    const l = ccw ? -Math.PI * 0.4 : Math.PI * 0.4;
+    const px = r * Math.cos(a);
+    const py = r * Math.sin(a)
+    const tx = r * Math.cos(a - l) - px;
+    const ty = r * Math.sin(a - l) - py;
+    const nx = -ty / Math.sqrt(3);
+    const ny = tx / Math.sqrt(3);
+    const b = ccw ? Math.PI * 1.25 : Math.PI * 0.25;
+    const e = ccw ? Math.PI * 2.75 : Math.PI * 1.75;
+    ctx.ellipse(x, y, r, r, 0, b, e);
+    ctx.stroke();
+    
+    ctx.beginPath();
+    ctx.moveTo(x + px, y + py);
+    ctx.lineTo(x + px + tx + nx, y + py + ty + ny);
+    ctx.lineTo(x + px + tx - nx, y + py + ty - ny);
+    ctx.fill();
+}
+
 function undoButtonDraw(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, scene: Scene) {
-    ctx.fillStyle = scene.undoCount() === 0 ? "gray" : "black";
+    ctx.fillStyle = "white";
     ctx.fillRect(box.left, box.top, box.width, box.height);
+
+    const iconStyle = scene.undoCount() === 0 ? "gray" : "black";
+    ctx.strokeStyle = iconStyle;
+    ctx.fillStyle = iconStyle;
+    ctx.lineWidth = 8;
+    ctx.lineCap = "round";
+    drawCircleWithArrow(
+        ctx,
+        box.left + box.width * 0.5,
+        box.top + box.height * 0.5,
+        22,
+        true,
+    );
 }
 
 function undoButton(scene: Scene) {
@@ -1037,8 +1072,21 @@ function redoButtonTap(_p: Point2D, ec: ElementContext, scene: Scene) {
 }
 
 function redoButtonDraw(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, scene: Scene) {
-    ctx.fillStyle = scene.redoCount() === 0 ? "gray" : "black";
+    ctx.fillStyle = "white";
     ctx.fillRect(box.left, box.top, box.width, box.height);
+
+    const iconStyle = scene.redoCount() === 0 ? "gray" : "black";
+    ctx.strokeStyle = iconStyle;
+    ctx.fillStyle = iconStyle;
+    ctx.lineWidth = 8;
+    ctx.lineCap = "round";
+    drawCircleWithArrow(
+        ctx,
+        box.left + box.width * 0.5,
+        box.top + box.height * 0.5,
+        22,
+        false,
+    );
 }
 
 function redoButton(scene: Scene) {
@@ -1082,7 +1130,7 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
             2,
         ),
         Bottom(
-            Flex(128, 0,
+            Flex(64, 0,
                 muxTools,  
             ),
             Flex(64, 0,

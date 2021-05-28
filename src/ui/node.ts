@@ -1178,29 +1178,24 @@ function muxElements(enabled: Set<MuxKey>, es: Array<[MuxKey, WPHPLayout<any, an
     return res;
 }
 
-class MuxLayout extends WPHPLayout<StaticArray<WPHPLayout<any, any>>, undefined> {
-    private enabled: Set<MuxKey>;
-    private mux: Array<[MuxKey, WPHPLayout<any, any>]>;
+class MuxLayout<K extends MuxKey> extends WPHPLayout<StaticArray<WPHPLayout<any, any>>, undefined> {
+    private enabled: Set<K>;
+    private mux: Array<[K, WPHPLayout<any, any>]>;
 
-    constructor(enabled: Set<MuxKey>, children: Array<[MuxKey, WPHPLayout<any, any>]>) {
+    constructor(enabled: Set<K>, children: Array<[K, WPHPLayout<any, any>]>) {
         super(undefined, muxElements(enabled, children));
         this.enabled = enabled;
         this.mux = children;
     }
 
-    toggle(disable: Array<MuxKey>, enable: Array<MuxKey>, ec: ElementContext) {
-        for (const k of disable) {
-            this.enabled.delete(k);
+    set(ec: ElementContext, ...enable: Array<K>) {
+        const enabled = new Set(enable);
+        for (const [k, v] of this.mux) {
+            if (!enabled.has(k)) {
+                callDetachListeners(v);
+            }
         }
-        for (const k of enable) {
-            this.enabled.add(k);
-        }
-        this.child = muxElements(this.enabled, this.mux);
-        ec.requestLayout();
-    }
-
-    set(ec: ElementContext, ...enable: Array<MuxKey>) {
-        this.enabled = new Set(enable);
+        this.enabled = enabled;
         this.child = muxElements(this.enabled, this.mux);
         ec.requestLayout();
     }
@@ -1216,9 +1211,8 @@ class MuxLayout extends WPHPLayout<StaticArray<WPHPLayout<any, any>>, undefined>
     }
 };
 
-// TODO: have the keys used in Mux be part of the type.
-export function Mux(enabled: Array<MuxKey>, ...children: Array<[MuxKey, WPHPLayout<any, any>]>): MuxLayout {
-    return new MuxLayout(new Set(enabled), children);
+export function Mux<Key extends MuxKey, EnabledKey extends Key>(enabled: Array<EnabledKey>, ...children: Array<[Key, WPHPLayout<any, any>]>): MuxLayout<Key> {
+    return new MuxLayout<typeof children[number][0]>(new Set(enabled), children);
 }
 
 export class PositionLayout<Child extends WPHPLayout<any, any> | undefined, State> extends Element<"pos", Child, State> {
