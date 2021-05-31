@@ -4,7 +4,7 @@ import { Point2D, pointDistance } from "./point.js";
 //import { ODEMethod } from "./ode.js";
 //import { Euler } from "./euler.js";
 //import { RungeKutta4 } from "./rk4.js";
-import { addChild, Bottom, Box, ElementContext, Fill, Flex, Layer, LayoutBox, LayoutTakesWidthAndHeight, Left, Mux, PanPoint, Position, PositionLayout, Relative, removeChild, Scroll } from "./ui/node.js";
+import { addChild, Bottom, Box, ElementContext, Fill, Flex, Layer, LayoutBox, LayoutTakesWidthAndHeight, Left, Mux, PanPoint, Position, PositionLayout, Relative, removeChild, Scroll, Switch } from "./ui/node.js";
 
 export type Beam = {
     p1: number; // Index of pin at beginning of beam.
@@ -1092,11 +1092,40 @@ function redoButtonDraw(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: Elem
 function redoButton(scene: Scene) {
     return Flex(64, 0, scene).onTap(redoButtonTap).onDraw(redoButtonDraw);
 }
+/*
+export function TabSelect(size: number, grow: number, child?: WPHPLayout<any, any>): FlexLayout<TabState, any> {
+    return Flex(size, grow, );
+}
+
+type TabState = { active: boolean, i: number, selected: { i: number } };
+
+export function TabStrip(selectHeight: number, contentHeight: number, ...tabs: Array<[FlexLayout<TabState, any>, WPHPLayout<any, any>]>): WPHPLayout<any, any> {
+    const select = new Array<FlexLayout<TabState, any>>(tabs.length);
+    const content = new Array<[number, WPHPLayout<any, any>]>(tabs.length);
+    const selected = { i: 0 };
+    for (let i = 0; i < tabs.length; i++) {
+        select[i] = tabs[i][0];
+        content[i] = [i, tabs[i][1]];
+    }
+    const mux = Switch(tabs[0][0], ...content);
+    for (let i = 0; i < tabs.length; i++) {
+        select[i].onTap((_p: Point2D, ec: ElementContext, state: TabState) => {
+
+            state.active = true;
+            mux.set(ec, tabs[i][0]);
+        });
+    }
+    return Bottom(
+        Flex(contentHeight, 0, Left(...select)),
+        Flex(selectHeight, 0, mux),
+    );
+}
+*/
 
 export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
     const scene = new Scene(sceneJSON);
 
-    const muxScene = Mux(
+    const sceneUI = Mux(
         ["terrain", "truss", "add_truss"],
         ["terrain", Fill(sceneJSON).onDraw(drawTerrain)],
         ["truss", TrussLayer(scene)],
@@ -1107,37 +1136,31 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
     const drawG = drawFill("green");
     const drawB = drawFill("blue");
 
-    const muxTools = Mux(
-        ["undo"],
-        [
-            "undo",
-            Left(
-                undoButton(scene),
-                redoButton(scene),
-            ),
-        ],
-        ["g", Fill().onDraw(drawG)],
-        ["b", Fill().onDraw(drawB)],
+    const tools = Switch(
+        1,
+        Left(undoButton(scene), redoButton(scene)),
+        Fill().onDraw(drawG),
+        Fill().onDraw(drawB),
     );
 
     return Layer(
         Scroll(
             Box(
                 sceneJSON.width, sceneJSON.height,
-                muxScene,
+                sceneUI,
             ),
             undefined,
             2,
         ),
         Bottom(
             Flex(64, 0,
-                muxTools,  
+                tools,  
             ),
             Flex(64, 0,
                 Left(
-                    Flex(64, 0).onDraw(drawR).onTap((_p: Point2D, ec: ElementContext) => { muxTools.set(ec, "undo"); }),
-                    Flex(64, 0).onDraw(drawG).onTap((_p: Point2D, ec: ElementContext) => { muxTools.set(ec, "g"); }),
-                    Flex(64, 0).onDraw(drawB).onTap((_p: Point2D, ec: ElementContext) => { muxTools.set(ec, "b"); }),
+                    Flex(64, 0).onDraw(drawR).onTap((_p: Point2D, ec: ElementContext) => { tools.set(0, ec); sceneUI.set(ec, "terrain", "truss"); }),
+                    Flex(64, 0).onDraw(drawG).onTap((_p: Point2D, ec: ElementContext) => { tools.set(1, ec); sceneUI.set(ec, "terrain", "truss", "add_truss"); }),
+                    Flex(64, 0).onDraw(drawB).onTap((_p: Point2D, ec: ElementContext) => { tools.set(2, ec); sceneUI.set(ec, "terrain", "truss"); }),
                 ),
             ),
         ),

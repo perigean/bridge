@@ -275,28 +275,28 @@ export function removeChild(e: Element<any, StaticArray<Element<any, any, any>>,
     ec.requestLayout();
 }
 
-abstract class WPHPLayout<Child extends ChildConstraint<any>, State> extends Element<'wphp', Child, State> {
+export abstract class WPHPLayout<Child extends ChildConstraint<any>, State> extends Element<'wphp', Child, State> {
     constructor(state: State, child: Child) {
         super('wphp', state, child);
     }
     abstract layout(left: number, top: number, width: number, height: number): void;
 };
 
-abstract class WPHSLayout<Child extends ChildConstraint<any>, State> extends Element<'wphs', Child, State> {
+export abstract class WPHSLayout<Child extends ChildConstraint<any>, State> extends Element<'wphs', Child, State> {
     constructor(state: State, child: Child) {
         super('wphs', state, child);
     }
     abstract layout(left: number, top: number, width: number): void;
 };
 
-abstract class WSHPLayout<Child extends ChildConstraint<any>, State> extends Element<'wshp', Child, State> {
+export abstract class WSHPLayout<Child extends ChildConstraint<any>, State> extends Element<'wshp', Child, State> {
     constructor(state: State, child: Child) {
         super('wshp', state, child);
     }
     abstract layout(left: number, top: number, height: number): void;
 };
 
-abstract class WSHSLayout<Child extends ChildConstraint<any>, State> extends Element<'wshs', Child, State> {
+export abstract class WSHSLayout<Child extends ChildConstraint<any>, State> extends Element<'wshs', Child, State> {
     constructor(state: State, child: Child) {
         super('wshs', state, child);
     }
@@ -978,7 +978,7 @@ export function VCenter<State = undefined>(child: WSHSLayout<any, any> | WPHSLay
     }
 }
 
-class FlexLayout<State, Child extends WPHPLayout<any, any> | undefined> extends Element<'flex', Child, State> {
+export class FlexLayout<State, Child extends WPHPLayout<any, any> | undefined> extends Element<'flex', Child, State> {
     size: number;
     grow: number;
     constructor(size: number, grow: number, state: State, child: Child) {
@@ -1166,6 +1166,45 @@ export function Layer<State>(first: State | WPHPLayout<any, any>, ...children: A
     return new LayerLayout<State>(first, children);
 }
 
+export type OnSwitchSelect = (ec: ElementContext) => void;
+
+class SwitchLayout<Indices extends number> extends WPHPLayout<WPHPLayout<any, any>, Indices> {
+    private children: Array<WPHPLayout<any, any>>;
+
+    constructor(i: Indices, children: Array<WPHPLayout<any, any>>) {
+        super(i, children[i]);
+        this.children = children;
+    }
+
+    set(i: Indices, ec: ElementContext) {
+        if (i !== this.state) {
+            callDetachListeners(this.child);
+        }
+        this.state = i;
+        this.child = this.children[i];
+        ec.requestLayout();
+    }
+
+    get(): Indices {
+        return this.state;
+    }
+
+    layout(left: number, top: number, width: number, height: number): void {
+        this.left = left;
+        this.top = top;
+        this.width = width;
+        this.height = height;
+        
+        this.child.layout(left, top, width, height);
+    }
+};
+
+type Indices<T extends any[]> = Exclude<Partial<T>["length"], T["length"]> & number;
+
+export function Switch<Children extends WPHPLayout<any, any>[]>(i: Indices<Children>, ...children: Children): SwitchLayout<Indices<Children>> {
+    return new SwitchLayout(i, children);
+}
+
 export type MuxKey = string | number | symbol;
 
 function muxElements(enabled: Set<MuxKey>, es: Array<[MuxKey, WPHPLayout<any, any>]>): Array<WPHPLayout<any, any>> {
@@ -1191,13 +1230,17 @@ class MuxLayout<K extends MuxKey> extends WPHPLayout<StaticArray<WPHPLayout<any,
     set(ec: ElementContext, ...enable: Array<K>) {
         const enabled = new Set(enable);
         for (const [k, v] of this.mux) {
-            if (!enabled.has(k)) {
+            if (this.enabled.has(k) && !enabled.has(k)) {
                 callDetachListeners(v);
             }
         }
         this.enabled = enabled;
         this.child = muxElements(this.enabled, this.mux);
         ec.requestLayout();
+    }
+
+    get(): Set<K> {
+        return this.enabled;
     }
 
     layout(left: number, top: number, width: number, height: number): void {
