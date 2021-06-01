@@ -12,9 +12,12 @@ export type LayoutBox = {
 // TODO: Replace use of any with unknown.
 // TODO: Pass ElementContext along with layout, so that we can have dynamic layouts.
 
+export type TimerHandler = (t: number, ec: ElementContext) => void;
+
 export interface ElementContext {
     requestDraw(): void;
     requestLayout(): void;
+    timer(handler: TimerHandler, duration: number | undefined): number;
 };
 
 type ParameterlessHandler<State> = (ec: ElementContext, state: State) => void;
@@ -338,29 +341,6 @@ type HasTouchHandlers<State> = {
     onTouchEndHandler: OnTouchEndHandler<State>;
 } & Element<any, any, State>;
 
-class Debouncer {
-    bounce: () => void;
-    timeout: number | undefined;
-
-    constructor(f: () => void) {
-        this.bounce = () => {
-            if (this.timeout === undefined) {
-                this.timeout = setTimeout(() => {
-                    this.timeout = undefined;
-                    f();
-                }, 0);
-            }
-        };
-    }
-
-    clear() {
-        if (this.timeout !== undefined) {
-            clearTimeout(this.timeout);
-            this.timeout = undefined;
-        }
-    }
-};
-
 function findTouchTarget(root: Element<any, any, any>, p: Point2D): undefined | HasTouchHandlers<any> {
     const stack = [root];
     const x = p[0];
@@ -392,16 +372,147 @@ const TARGET_ROOT = 1;
 type TARGET_NONE = 2;
 const TARGET_NONE = 2;
 
-export class RootLayout implements ElementContext {
+class RootElementContext implements ElementContext {
+    private layoutRequested: boolean;
+    private layoutEvaluating: boolean;
+    private drawRequested: boolean;
+    private drawEvaluating: boolean;
+    private vp: LayoutBox;
+    private evaluate: () => void;
+    private evaluateToken: number | undefined;
+    private nextTimerID: number;
+    private timers: Map<number, { handler: TimerHandler, start: number, duration: number | undefined }>;
+    private callTimersToken: number | undefined;
+    private callTimers: (now: number) => void;
+
+    constructor(ctx: CanvasRenderingContext2D, root: WPHPLayout<any, any>, width: number, height: number) {
+        this.layoutRequested = false;
+        this.layoutEvaluating = false;
+        this.drawRequested = false;
+        this.drawEvaluating = false;
+        this.vp = { left: 0, top: 0, width, height };
+        this.evaluate = () => {
+            this.evaluateToken = undefined;
+            if (this.layoutRequested) {
+                this.layoutRequested = false;
+                this.layoutEvaluating = true;
+                try {
+                    root.layout(this.vp.left, this.vp.top, this.vp.width, this.vp.height);
+                    this.drawRequested = true;
+                } finally {
+                    this.layoutEvaluating = false;
+                }
+            }
+            if (this.drawRequested) {
+                this.drawRequested = false;
+                this.drawEvaluating = true;
+                try {
+                    clearAndDrawElementTree(ctx, root, this, this.vp);
+                } finally {
+                    this.drawEvaluating = false;
+                }
+            }
+        };
+        this.evaluateToken = undefined;
+        this.nextTimerID = 0;
+        this.timers = new Map();
+        this.callTimersToken = undefined;
+        this.callTimers = (now: number) => {
+            const finished : Array<number> = [];
+            for (const [k, v] of this.timers) {
+                if (v.start > now) {
+                    // requestAnimationFrame handlers sometimes receive a timestamp earlier
+                    // than performance.now() called when requestAnimationFrame was called.
+                    // So, if we see a time inversion, just move the start time early.
+                    v.start = now;
+                }
+                if (v.duration !== undefined && v.duration <= now - v.start) {
+                    v.handler(v.duration, this);
+                    finished.push(k);
+                } else {
+                    v.handler(now - v.start, this);
+                }
+            }
+            for (const k of finished) {
+                this.timers.delete(k);
+            }
+            if (this.timers.size !== 0) {
+                this.callTimersToken = requestAnimationFrame(this.callTimers);
+            } else {
+                this.callTimersToken = undefined;
+            }
+        };
+    }
+
+    requestDraw(): void {
+        if (this.drawEvaluating) {
+            throw new Error("draw requested during draw evaluation");
+        }
+        if (this.layoutEvaluating) {
+            throw new Error("layout requested during draw evaluation");
+        }
+        if (this.drawRequested) {
+            return;
+        }
+        this.drawRequested = true;
+        if (this.evaluateToken !== undefined) {
+            return;
+        }
+        this.evaluateToken = setTimeout(this.evaluate, 0);
+    }
+    requestLayout(): void {
+        if (this.layoutEvaluating) {
+            throw new Error("layout requested during layout evaluation");
+        }
+        if (this.layoutRequested) {
+            return;
+        }
+        this.layoutRequested = true;
+        if (this.evaluateToken !== undefined) {
+            return;
+        }
+        this.evaluateToken = setTimeout(this.evaluate, 0);
+    }
+
+    timer(handler: TimerHandler, duration: number | undefined): number {
+        const id = this.nextTimerID;
+        this.nextTimerID++;
+        this.timers.set(id, { handler, start: performance.now(), duration });
+        if (this.callTimersToken === undefined) {
+            this.callTimersToken = requestAnimationFrame(this.callTimers);
+        }
+        return id;
+    }
+
+    clearTimer(id: number) {
+        this.timers.delete(id);
+        if (this.timers.size === 0 && this.callTimersToken !== undefined) {
+            cancelAnimationFrame(this.callTimersToken);
+            this.callTimersToken = undefined;
+        }
+    }
+
+    setViewport(width: number, height: number) {
+        this.vp.width = width;
+        this.vp.height = height;
+        this.requestLayout();
+    }
+
+    disconnect(): void {
+        if (this.evaluateToken === undefined) {
+            return;
+        }
+        clearTimeout(this.evaluateToken);
+        this.evaluateToken = undefined;
+    }
+};
+
+export class RootLayout {
+    ec: RootElementContext;
     child: WPHPLayout<any, any>;
     canvas: HTMLCanvasElement;
-    ctx: CanvasRenderingContext2D;
+    //ctx: CanvasRenderingContext2D;
     resize: ResizeObserver;
-    vp: LayoutBox;
-
-    // TODO: we should not rerender if there are pending layout requests.
-    debounceLayout: Debouncer;
-    debounceDraw: Debouncer;
 
     private touchTargets: Map<number, HasTouchHandlers<any> | TARGET_ROOT | TARGET_NONE>;
     private touchTargetDetached: OnDetachHandler<any>;
@@ -410,50 +521,29 @@ export class RootLayout implements ElementContext {
     private touchEnd: (evt: TouchEvent) => void;
 
     constructor(canvas: HTMLCanvasElement, child: WPHPLayout<any, any>) {
-        this.child = child;
-        this.canvas = canvas;
         const ctx = canvas.getContext("2d", {alpha: false});
         if (ctx === null) {
             throw new Error("failed to get 2d context");
         }
-        this.ctx = ctx;
+        this.ec = new RootElementContext(ctx, child, canvas.width, canvas.height);
+        this.child = child;
+        this.canvas = canvas;
+        canvas.width = canvas.width * window.devicePixelRatio;
+        canvas.height = canvas.height * window.devicePixelRatio;
+        ctx.transform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
+        this.ec.requestLayout();
+        
         this.resize = new ResizeObserver((entries: ResizeObserverEntry[]) => {
             if (entries.length !== 1) {
                 throw new Error(`ResizeObserver expects 1 entry, got ${entries.length}`);
             }
             const content = entries[0].contentRect;
-            const vp = this.vp;
-            vp.left = 0;
-            vp.top = 0;
-            vp.width = content.width;
-            vp.height = content.height
-            canvas.width = vp.width * window.devicePixelRatio;
-            canvas.height = vp.height * window.devicePixelRatio;
+            canvas.width = content.width * window.devicePixelRatio;
+            canvas.height = content.height * window.devicePixelRatio;
             ctx.transform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
-            
-            this.debounceLayout.clear();
-            this.child.layout(0, 0, vp.width, vp.height);
-            this.debounceDraw.clear();
-            clearAndDrawElementTree(ctx, this.child, this /* ElementContext */, vp);
+            this.ec.setViewport(content.width, content.height);
         });
         this.resize.observe(canvas, {box: "device-pixel-content-box"});
-        this.vp = {
-            left: 0,
-            top: 0,
-            width: canvas.width,
-            height: canvas.height,
-        };
-
-        this.debounceLayout = new Debouncer(() => {
-            this.child.layout(0, 0, this.vp.width, this.vp.height);
-            this.requestDraw();
-        });
-        this.requestLayout = this.debounceLayout.bounce;
-
-        this.debounceDraw = new Debouncer(() => {
-            clearAndDrawElementTree(ctx, this.child, this /* ElementContext */, this.vp);
-        });
-        this.requestDraw = this.debounceDraw.bounce;
 
         this.touchTargets = new Map();
         this.touchTargetDetached = (e: Element<any, any, any>) => {
@@ -487,7 +577,7 @@ export class RootLayout implements ElementContext {
                     preventDefault = true;
                     this.touchTargets.set(t.identifier, target);
                     target.onDetach(this.touchTargetDetached);
-                    target.onTouchBeginHandler(t.identifier, p, this /* ElementContext */, target.state);
+                    target.onTouchBeginHandler(t.identifier, p, this.ec, target.state);
                 }
             }
             if (preventDefault) {
@@ -518,7 +608,7 @@ export class RootLayout implements ElementContext {
                 }
             }
             for (const [target, ts] of targets) {
-                target.onTouchMoveHandler(ts, this /* ElementContext */, target.state);
+                target.onTouchMoveHandler(ts, this.ec, target.state);
             }
             if (preventDefault) {
                 evt.preventDefault();
@@ -537,7 +627,7 @@ export class RootLayout implements ElementContext {
                 if (target !== TARGET_ROOT && target !== TARGET_NONE) {
                     preventDefault = true;
                     target.removeOnDetach(this.touchTargetDetached);
-                    target.onTouchEndHandler(id, this /* ElementContext */, target.state);
+                    target.onTouchEndHandler(id, this.ec, target.state);
                 }
             }
             if (preventDefault) {
@@ -548,14 +638,11 @@ export class RootLayout implements ElementContext {
         this.canvas.addEventListener("touchmove", this.touchMove, false);
         this.canvas.addEventListener("touchend", this.touchEnd, false);
         this.canvas.addEventListener("touchcancel", this.touchEnd, false);
-
-        this.requestLayout();
     }
 
     disconnect() {
         this.resize.disconnect();
-        this.debounceDraw.clear();
-        this.debounceLayout.clear();
+        this.ec.disconnect();
         callDetachListeners(this.child);
 
         this.canvas.removeEventListener("touchstart", this.touchStart, false);
@@ -563,17 +650,6 @@ export class RootLayout implements ElementContext {
         this.canvas.removeEventListener("touchend", this.touchEnd, false);
         this.canvas.removeEventListener("touchcancel", this.touchEnd, false);
     }
-
-    ////////////////////////////////////////////////////////////////////////////
-    // ElementContext functions
-    ////////////////////////////////////////////////////////////////////////////
-    requestDraw: () => void;
-    requestLayout: () => void;
-
-    ////////////////////////////////////////////////////////////////////////////
-    // TouchHandler functions
-    ////////////////////////////////////////////////////////////////////////////
-    // TODO: add TouchForwarder here. install touch handlers
 };
 
 // TODO: Have acceleration structures. (so hide children, and forward tap/pan/draw manually, with transform)
