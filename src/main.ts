@@ -7,7 +7,7 @@ import { RootLayout, Border } from "./ui/node.js"
 
 const scene : SceneJSON = {
     truss: {
-        fixedPins: [[0, 512], [128, 512], [1920, 512], [2048, 512]],
+        fixedPins: [[0, 64], [32, 64], [96, 64], [512, 64]],
         startPins: [],
         editPins: [],
         startBeams: [
@@ -26,12 +26,12 @@ const scene : SceneJSON = {
         ],
     },
     terrain: {
-        hmap: [512, 512, 576, 640, 672, 688, 688, 768, 768, 768, 768, 688, 672, 640, 576, 512, 512],
+        hmap: [64, 64, 64, 96, 96, 96, 64, 64, 64],
         friction: 0.5,
         style: "darkgrey",
     },
-    height: 1024,
-    width: 2048,
+    height: 128,
+    width: 128,
     g: [0, 128],
     undoStack: [],
     redoStack: [],

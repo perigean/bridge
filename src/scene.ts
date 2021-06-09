@@ -1,9 +1,8 @@
 // Copyright Charles Dueck 2020
 
+import { Derivative } from "./ode.js";
 import { Point2D, pointDistance } from "./point.js";
-//import { ODEMethod } from "./ode.js";
-//import { Euler } from "./euler.js";
-//import { RungeKutta4 } from "./rk4.js";
+import { RungeKutta4 } from "./rk4.js";
 import { addChild, Bottom, Box, ElementContext, Fill, Flex, Layer, LayoutBox, LayoutTakesWidthAndHeight, Left, Mux, PanPoint, Position, PositionLayout, Relative, removeChild, Scroll, Switch } from "./ui/node.js";
 
 export type Beam = {
@@ -15,7 +14,6 @@ export type Beam = {
     deck?: boolean; // Is this beam a deck? (do discs collide)
 };
 
-/*
 type SimulationBeam = {
     p1: number;
     p2: number;
@@ -24,7 +22,6 @@ type SimulationBeam = {
     l: number;
     deck: boolean;
 }
-*/
 
 export type Disc = {
     p: number;  // Index of moveable pin this disc surrounds.
@@ -94,6 +91,10 @@ function trussUneditablePinsEnd(truss: Truss): number {
     return truss.startPins.length;
 }
 
+function trussMovingPinsCount(truss: Truss): number {
+    return truss.startPins.length + truss.editPins.length;
+}
+
 function trussGetClosestPin(truss: Truss, p: Point2D, maxd: number, beamStart?: number): number | undefined {
     // TODO: acceleration structures. Probably only matters once we have 1000s of pins?
     const block = new Set<number>();
@@ -158,15 +159,14 @@ export type Terrain = {
     friction: number;
     style: string | CanvasGradient | CanvasPattern;
 };
-/*
+
 type SimulationHMap = Array<{
     height: number;
-    nx: number; // Normal unit vector.
+    nx: number; // Outward (direction of bounce) normal unit vector.
     ny: number;
     decks: Array<SimulationBeam>;   // Updated every frame, all decks above this segment.
     deckCount: number;  // Number of indices in decks being used.
 }>;
-*/
 
 type AddBeamAction = {
     type: "add_beam";
@@ -201,17 +201,388 @@ export type SceneJSON = {
     undoStack: Array<TrussAction>;
 }
 
+class SceneSimulator {
+    private method: RungeKutta4;                    // ODE solver method used to simulate.
+    private dydt: Derivative;                       // Derivative of ODE state.
+    private h: number;                              // Time step.
+    private fixedPins: Float32Array;                // Positions of fixed pins [x0, y0, x1, y1, ...].
+    private tLatest: number;                        // The highest time value simulated.
+    private keyInterval: number;                      // Time per keyframe.
+    private keyframes: Map<number, Float32Array>;   // Map of time to saved state.
+
+    constructor(scene: SceneJSON, h: number, keyInterval: number) {
+        this.h = h;
+        this.tLatest = 0;
+        this.keyInterval = keyInterval;
+        this.keyframes = new Map();
+        const truss = scene.truss;
+        
+        // Cache fixed pin values.
+        const fixedPins = new Float32Array(truss.fixedPins.length * 2);
+        for (let i = 0; i < truss.fixedPins.length; i++) {
+            fixedPins[i * 2] = truss.fixedPins[i][0];
+            fixedPins[i * 2 + 1] = truss.fixedPins[i][1];
+        }
+        this.fixedPins = fixedPins;
+
+        // Cache Beam values.
+        const beams: Array<SimulationBeam> = [...truss.startBeams, ...truss.editBeams].map(b => ({
+            p1: b.p1,
+            p2: b.p2,
+            m: b.m,
+            w: b.w,
+            l: b.l !== undefined ? b.l : pointDistance(trussGetPin(truss, b.p1), trussGetPin(truss, b.p2)),
+            deck: b.deck !== undefined ? b.deck : false,
+        }));
+
+        // Cache discs.
+        const discs = truss.discs;  // TODO: do we ever wnat to mutate discs?
+
+        // Cache materials.
+        const materials = truss.materials;  // TODO: do we ever want to mutate materials?
+
+        // Compute the mass of all pins.
+        const movingPins = trussMovingPinsCount(truss);
+        const mass = new Float32Array(movingPins);
+        function addMass(pin: number, m: number) {
+            if (pin < 0) {
+                // Fixed pins already have infinite mass.
+                return;
+            }
+            mass[pin] += m;
+        }
+        for (const b of beams) {
+            const m = b.l * b.w * materials[b.m].density;
+            // Distribute the mass between the two end pins.
+            // TODO: do proper mass moment of intertia calculation when rotating beams?
+            addMass(b.p1, m * 0.5);
+            addMass(b.p2, m * 0.5);
+        }
+        for (const d of discs) {
+            const m = d.r * d.r * Math.PI * materials[d.m].density;
+            addMass(d.p, m);
+        }
+        // Check that everything that can move has some mass.
+        for (const m of mass) {
+            if (m <= 0) {
+                throw new Error("mass 0 pin detected");
+            }
+        }
+
+        // Cache the terrain, set up acceleration structure for deck intersections.
+        const tFriction = scene.terrain.friction;
+        const height = scene.height;
+        const pitch = scene.width / (scene.terrain.hmap.length - 1);
+        const hmap: SimulationHMap = scene.terrain.hmap.map((h, i) => {
+            if (i + 1 >= scene.terrain.hmap.length) {
+                return {
+                    height: h,
+                    nx: 0.0,
+                    ny:-1.0,
+                    decks: [],
+                    deckCount: 0,
+                };
+            }
+            const dy = scene.terrain.hmap[i + 1] - h;
+            const l = Math.sqrt(dy * dy + pitch * pitch);
+            return {
+                height: h,
+                nx: dy / l,
+                ny: -pitch / l,
+                decks: [],
+                deckCount: 0,
+            };
+        });
+        function hmapAddDeck(i: number, d: SimulationBeam) {
+            if (i < 0 || i >= hmap.length) {
+                return;
+            }
+            const h = hmap[i];
+            h.decks[h.deckCount] = d;
+            h.deckCount++;
+        }
+        
+        // State accessors
+        const vIndex = movingPins * 2;
+        function getdx(y: Float32Array, pin: number): number {
+            if (pin < 0) {
+                return fixedPins[fixedPins.length + pin * 2];
+            } else {
+                return y[pin * 2 + 0];
+            }
+        }
+        function getdy(y: Float32Array, pin: number): number {
+            if (pin < 0) {
+                return fixedPins[fixedPins.length + pin * 2 + 1];
+            } else {
+                return y[pin * 2 + 1];
+            }
+        }
+        function getvx(y: Float32Array, pin: number): number {
+            if (pin < 0) {
+                return 0.0;
+            } else {
+                return y[vIndex + pin * 2];
+            }
+        }
+        function getvy(y: Float32Array, pin: number): number {
+            if (pin < 0) {
+                return 0.0;
+            } else {
+                return y[vIndex + pin * 2 + 1]; 
+            }
+        }
+        function setdx(y: Float32Array, pin: number, val: number) {
+            if (pin >= 0) {
+                y[pin * 2 + 0] = val;
+            }
+        }
+        function setdy(y: Float32Array, pin: number, val: number) {
+            if (pin >= 0) {
+                y[pin * 2 + 1] = val;
+            }
+        }
+        function setvx(y: Float32Array, pin: number, val: number) {
+            if (pin >= 0) {
+                y[vIndex + pin * 2 + 0] = val;
+            }
+        }
+        function setvy(y: Float32Array, pin: number, val: number) {
+            if (pin >= 0) {
+                y[vIndex + pin * 2 + 1] = val;
+            }
+        }
+        function force(dydt: Float32Array, pin: number, fx: number, fy: number) {
+            if (pin >= 0) {
+                const m = mass[pin];
+                dydt[vIndex + pin * 2 + 0] += fx / m;
+                dydt[vIndex + pin * 2 + 1] += fy / m;
+            }
+        }
+
+        // Set up initial ODE state. NB: velocities are all zero.
+        const y0 = new Float32Array(movingPins * 4);
+        for (let i = 0; i < movingPins; i++) {
+            const d = trussGetPin(truss, i);
+            setdx(y0, i, d[0]);
+            setdy(y0, i, d[1]);
+        }
+
+        // Cache acceleration due to gravity.
+        const g = scene.g;
+
+        this.dydt = function dydy(_t: number, y: Float32Array, dydt: Float32Array) {
+            // Derivative of position is velocity.
+            for (let i = 0; i < movingPins; i++) {
+                setdx(dydt, i, getvx(y, i));
+                setdy(dydt, i, getvy(y, i));
+            }
+
+            // Acceleration due to gravity.
+            for (let i = 0; i < movingPins; i++) {
+                setvx(dydt, i, g[0]);
+                setvy(dydt, i, g[1]);
+            }
+
+            // Decks are updated in hmap in the below loop through beams, so clear the previous values.
+            for (const h of hmap) {
+                h.deckCount = 0;
+            }
+            
+            // Acceleration due to beam stress.
+            for (const beam of beams) {
+                const p1 = beam.p1;
+                const p2 = beam.p2;
+                if (p1 < 0 && p2 < 0) {
+                    // Both ends are not moveable.
+                    continue;
+                }
+                const E = materials[beam.m].E;
+                const w = beam.w;
+                const l0 = beam.l;
+                const dx = getdx(y, p2) - getdx(y, p1);
+                const dy = getdy(y, p2) - getdy(y, p1);
+                const l = Math.sqrt(dx * dx + dy * dy);
+                const k = E * w / l0;
+                const springF = (l - l0) * k;
+                const ux = dx / l;      // Unit vector in directino of beam;
+                const uy = dy / l;
+
+                // Beam stress force.
+                force(dydt, p1, ux * springF, uy * springF);
+                force(dydt, p2, -ux * springF, -uy * springF);
+
+                // Damping force.
+                const zeta = 0.5;
+                const vx = getvx(y, p2) - getvx(y, p1); // Velocity of p2 relative to p1.
+                const vy = getvy(y, p2) - getvy(y, p1);
+                const v = vx * ux + vy * uy;    // Velocity of p2 relative to p1 in direction of beam.
+                if (p1 >= 0 && p2 >= 0) {
+                    const m1 = mass[p1];
+                    const m2 = mass[p2];
+                    const dampF = v * zeta * Math.sqrt(k * m1 * m2 / (m1 + m2));
+                    force(dydt, p1, ux * dampF, uy * dampF);
+                    force(dydt, p2, -ux * dampF, -uy * dampF);
+                } else if (p1 >= 0) {
+                    const m1 = mass[p1];
+                    const dampF = v * zeta * Math.sqrt(k * m1);
+                    force(dydt, p1, ux * dampF, uy * dampF);
+                } else if (p2 >= 0) {
+                    const m2 = mass[p2];
+                    const dampF = v * zeta * Math.sqrt(k * m2);
+                    force(dydt, p2, -ux * dampF, -uy * dampF);
+                }
+
+                // Add decks to accleration structure
+                if (beam.deck) {
+                    const i1 = Math.floor(getdx(y, p1) / pitch);
+                    const i2 = Math.floor(getdx(y, p2) / pitch);
+                    const begin = Math.min(i1, i2);
+                    const end = Math.max(i1, i2);
+                    for (let i = begin; i <= end; i++) {
+                        hmapAddDeck(i, beam);
+                    }
+                }
+            }
+
+            // Acceleration due to terrain collision
+            // TODO: scene border collision
+            for (let i = 0; i < movingPins; i++) {
+                const dx = getdx(y, i); // Pin position.
+                const dy = getdy(y, i);
+                const m = mass[i];
+                let bounceF = 1000.0 * m; // Acceleration per metre of depth under terrain.
+                let nx; // Terrain unit normal (direction of acceleration).
+                let ny;
+                if (dx < 0.0) {
+                    nx = 0.0;
+                    ny = -1.0;
+                    bounceF *= dy - height + hmap[0].height;
+                } else {
+                    const ti = Math.min(hmap.length - 1, Math.floor(dx / pitch));
+                    nx = hmap[ti].nx;
+                    ny = hmap[ti].ny;
+                    // Distance below terrain is normal dot vector from terrain to point.
+                    bounceF *= -(nx * (dx - ti * pitch) + ny * (dy - hmap[ti].height));
+                }
+                if (bounceF <= 0.0) {
+                    // We are not bouncing.
+                    continue;
+                }
+                force(dydt, i, nx * bounceF, ny * bounceF);
+
+                // Friction.
+                // Apply acceleration in proportion to at, in direction opposite of tangent projected velocity.
+                
+                const tx = ny;
+                const ty = -nx;
+                const vx = getvx(y, i);
+                const vy = getvy(y, i);
+                const tv = vx * tx + vy * ty;
+                let frictionF = tFriction * bounceF * (tv > 0 ? -1 : 1);
+                force(dydt, i, tx * frictionF, ty * frictionF);
+
+                // Old Code
+                // TODO: why did this need to cap the acceleration? maybe bounce force is too high?
+                //const af = Math.min(tFriction * at, Math.abs(tv * 100)) * (tv >= 0.0 ? -1.0 : 1.0);
+            }
+            // TODO: discs
+        }
+
+        this.method = new RungeKutta4(y0, this.dydt);
+        this.keyframes.set(this.method.t, new Float32Array(this.method.y));
+    }
+
+    seekTimes(): IterableIterator<number> {
+        return this.keyframes.keys();
+    }
+
+    seek(t: number) {
+        const y = this.keyframes.get(t);
+        if (y === undefined) {
+            throw new Error(`${t} is not a keyframe time`);
+        }
+        this.method.y = y;
+        this.method.t = t;
+    }
+
+    time(): number {
+        return this.method.t;
+    }
+
+    next() {    // TODO: make this private?
+        this.method.next(this.h);
+        if (this.tLatest < this.method.t) {
+            this.keyframes.set(this.method.t, new Float32Array(this.method.y));
+            if (this.keyframes.size > 1 + Math.ceil(this.method.t / this.keyInterval)) {
+                this.keyframes.delete(this.tLatest);
+            }
+            this.tLatest = this.method.t;
+        }
+    }
+
+    simulate(until: number) {
+        while (this.method.t < until) {
+            this.next();
+        }
+    }
+
+    getPin(pin: number): Point2D {
+        if (pin < 0) {
+            const i = this.fixedPins.length + pin * 2;
+            return [this.fixedPins[i], this.fixedPins[i+1]];
+        } else {
+            const i = pin * 2;
+            const y = this.method.y;
+            return [y[i], y[i+1]];
+        }
+    }
+};
+
+type OnResetSimulatorHandler = (ec: ElementContext) => void;
 type OnAddPinHandler = (editIndex: number, pin: number, ec: ElementContext) => void;
 type OnRemovePinHandler = (editIndex: number, pin: number, ec: ElementContext) => void;
 
 
 export class SceneEditor {
     scene: SceneJSON;
+    private sim: SceneSimulator | undefined;
+    private onResetSimulatorHandlers: Array<OnResetSimulatorHandler>;
     private onAddPinHandlers: Array<OnAddPinHandler>;
     private onRemovePinHandlers: Array<OnRemovePinHandler>;
-    private editMaterial: number;
-    private editWidth: number;
-    private editDeck: boolean;
+    editMaterial: number;
+    editWidth: number;
+    editDeck: boolean;
+
+    constructor(scene: SceneJSON) {
+        this.scene = scene;
+        this.sim = undefined;
+        this.onResetSimulatorHandlers = [];
+        this.onAddPinHandlers = [];
+        this.onRemovePinHandlers = [];
+        // TODO: proper initialization;
+        this.editMaterial = 0;
+        this.editWidth = 4;
+        this.editDeck = true;
+    }
+
+    simulator(): SceneSimulator {
+        if (this.sim === undefined) {
+            this.sim = new SceneSimulator(this.scene, 0.001, 1);
+        }
+        return this.sim;
+    }
+
+    private resetSimulator(ec: ElementContext) {
+        this.sim = undefined;
+        for (const handler of this.onResetSimulatorHandlers) {
+            handler(ec);
+        }
+    }
+
+    onResetSimulator(handler: OnResetSimulatorHandler) {
+        this.onResetSimulatorHandlers.push(handler);
+    }
 
     private doAddBeam(a: AddBeamAction, ec: ElementContext) {
         const truss = this.scene.truss;
@@ -316,16 +687,6 @@ export class SceneEditor {
         }
     }
 
-    constructor(scene: SceneJSON) {
-        this.scene = scene;
-        this.onAddPinHandlers = [];
-        this.onRemovePinHandlers = [];
-        // TODO: proper initialization;
-        this.editMaterial = 0;
-        this.editWidth = 4;
-        this.editDeck = false;
-    }
-
     // Scene enumeration/observation methods
 
     onAddPin(handler: OnAddPinHandler) {
@@ -355,6 +716,7 @@ export class SceneEditor {
         }
         this.undoAction(a, ec);
         this.scene.redoStack.push(a);
+        this.resetSimulator(ec);
     }
 
     redo(ec: ElementContext): void {
@@ -364,6 +726,7 @@ export class SceneEditor {
         }
         this.doAction(a, ec);
         this.scene.undoStack.push(a);
+        this.resetSimulator(ec);
     }
 
     private action(a: TrussAction, ec: ElementContext): void {
@@ -862,22 +1225,17 @@ function createBeamPinOnDraw(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec:
     if (state.drag === undefined) {
         return;
     }
-    const pin = trussGetPin(truss, state.i);
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(pin[0], pin[1]);
-    if (state.drag.i !== undefined) {
-        const p = trussGetPin(truss, state.drag.i);
-        ctx.lineTo(p[0], p[1]);
-    } else {
-        ctx.lineTo(state.drag.p[0], state.drag.p[1]);
-    }
-    ctx.stroke();
+    const p1 = trussGetPin(truss, state.i);
+    const p2 = state.drag.i === undefined ? state.drag.p : trussGetPin(truss, state.drag.i);
+    const w = state.edit.editWidth;
+    const style = truss.materials[state.edit.editMaterial].style;
+    const deck = state.edit.editDeck;
+    drawBeam(ctx, p1, p2, w, style, deck);
 }
 
 function createBeamPinOnPan(ps: Array<PanPoint>, ec: ElementContext, state: CreateBeamPinState) {
     const truss = state.edit.scene.truss;
-    const i = trussGetClosestPin(truss, ps[0].curr, 16, state.i);
+    const i = trussGetClosestPin(truss, ps[0].curr, 8, state.i);
     state.drag = {
         p: ps[0].curr,
         i,
@@ -933,10 +1291,16 @@ function AddTrussEditablePins(edit: SceneEditor): LayoutTakesWidthAndHeight {
 }
 
 function AddTrussUneditablePins(edit: SceneEditor): LayoutTakesWidthAndHeight {
-    const truss = edit.scene.truss
+    const truss = edit.scene.truss;
+    const width = edit.scene.width;
+    const height = edit.scene.height;
     const children = [];
     for (let i = trussUneditablePinsBegin(truss); i !== trussUneditablePinsEnd(truss); i++) {
-        children.push(CreateBeamPin(edit, i));
+        const p = trussGetPin(truss, i);
+        if (p[0] > 0 && p[0] < width && p[1] > 0 && p[1] < height) {
+            // Beams should only be created from pins strictly inside the scene.
+            children.push(CreateBeamPin(edit, i));
+        }
     }
     return Relative(...children);
 }
@@ -948,7 +1312,7 @@ function AddTrussLayer(scene: SceneEditor): LayoutTakesWidthAndHeight {
     );
 }
 
-function drawBeam(ctx: CanvasRenderingContext2D, p1: Point2D, p2: Point2D, w: number, style: string | CanvasGradient | CanvasPattern) {
+function drawBeam(ctx: CanvasRenderingContext2D, p1: Point2D, p2: Point2D, w: number, style: string | CanvasGradient | CanvasPattern, deck?: boolean) {
     ctx.lineWidth = w;
     ctx.lineCap = "round";
     ctx.strokeStyle = style;
@@ -956,14 +1320,22 @@ function drawBeam(ctx: CanvasRenderingContext2D, p1: Point2D, p2: Point2D, w: nu
     ctx.moveTo(p1[0], p1[1]);
     ctx.lineTo(p2[0], p2[1]);
     ctx.stroke();
+    if (deck !== undefined && deck) {
+        ctx.strokeStyle = "brown";  // TODO: deck style
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(p1[0], p1[1]);
+        ctx.lineTo(p2[0], p2[1]);
+        ctx.stroke();
+    }
 }
 
 function trussLayerOnDraw(ctx: CanvasRenderingContext2D, _box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, truss: Truss) {
     for (const b of truss.startBeams) {
-        drawBeam(ctx, trussGetPin(truss, b.p1), trussGetPin(truss, b.p2), b.w, truss.materials[b.m].style);
+        drawBeam(ctx, trussGetPin(truss, b.p1), trussGetPin(truss, b.p2), b.w, truss.materials[b.m].style, b.deck);
     }
     for (const b of truss.editBeams) {
-        drawBeam(ctx, trussGetPin(truss, b.p1), trussGetPin(truss, b.p2), b.w, truss.materials[b.m].style);
+        drawBeam(ctx, trussGetPin(truss, b.p1), trussGetPin(truss, b.p2), b.w, truss.materials[b.m].style, b.deck);
     }
 }
 
@@ -971,7 +1343,22 @@ function TrussLayer(truss: Truss): LayoutTakesWidthAndHeight {
     return Fill(truss).onDraw(trussLayerOnDraw);
 }
 
-// TODO: Take Scene as state instead of SceneJSON?
+function simulateLayerOnDraw(ctx: CanvasRenderingContext2D, _box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, edit: SceneEditor) {
+    const scene = edit.scene;
+    const truss = scene.truss;
+    const sim = edit.simulator();
+    for (const b of truss.startBeams) {
+        drawBeam(ctx, sim.getPin(b.p1), sim.getPin(b.p2), b.w, truss.materials[b.m].style, b.deck);
+    }
+    for (const b of truss.editBeams) {
+        drawBeam(ctx, sim.getPin(b.p1), sim.getPin(b.p2), b.w, truss.materials[b.m].style, b.deck);
+    }
+}
+
+function SimulateLayer(edit: SceneEditor): LayoutTakesWidthAndHeight {
+    return Fill(edit).onDraw(simulateLayerOnDraw);
+}
+
 function drawTerrain(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, vp: LayoutBox, terrain: Terrain) {
     const hmap = terrain.hmap;
     const pitch = box.width / (hmap.length - 1);
@@ -1112,6 +1499,7 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
         ["terrain", Fill(sceneJSON.terrain).onDraw(drawTerrain)],
         ["truss", TrussLayer(sceneJSON.truss)],
         ["add_truss", AddTrussLayer(edit)],
+        ["simulate", SimulateLayer(edit)],
     );
 
     const drawR = drawFill("red");
@@ -1142,7 +1530,14 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
                 Left(
                     Flex(64, 0).onDraw(drawR).onTap((_p: Point2D, ec: ElementContext) => { tools.set(0, ec); sceneUI.set(ec, "terrain", "truss"); }),
                     Flex(64, 0).onDraw(drawG).onTap((_p: Point2D, ec: ElementContext) => { tools.set(1, ec); sceneUI.set(ec, "terrain", "truss", "add_truss"); }),
-                    Flex(64, 0).onDraw(drawB).onTap((_p: Point2D, ec: ElementContext) => { tools.set(2, ec); sceneUI.set(ec, "terrain", "truss"); }),
+                    Flex(64, 0).onDraw(drawB).onTap((_p: Point2D, ec: ElementContext) => {
+                        tools.set(2, ec);
+                        sceneUI.set(ec, "terrain", "simulate");
+                        ec.timer((t: number, ec: ElementContext) => {
+                            edit.simulator().simulate(t / 1000);
+                            ec.requestDraw();
+                        }, undefined);
+                    }),
                 ),
             ),
         ),

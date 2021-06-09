@@ -666,6 +666,22 @@ class ScrollLayout extends WPHPLayout<undefined, undefined> {
     private touchScroll: Map<number, { prev: Point2D, curr: Point2D }>;
     private touchTargetDetached: OnDetachHandler<unknown>;
 
+    private clampZoom() {
+        if (this.scroller.width < this.width / this.zoom) {
+            this.zoom = this.width / this.scroller.width;
+        }
+        if (this.scroller.height < this.height / this.zoom) {
+            this.zoom = this.height / this.scroller.height;
+        }
+        if (this.zoom > this.zoomMax) {
+            this.zoom = this.zoomMax;
+        }
+    }
+    private clampScroll() {
+        this.scroll[0] = clamp(this.scroll[0], 0, this.scroller.width - this.width / this.zoom);
+        this.scroll[1] = clamp(this.scroll[1], 0, this.scroller.height - this.height / this.zoom);
+    }
+
     private updateScroll() {
         const ts = [...this.touchScroll.values()];
         if (ts.length === 1) {
@@ -683,15 +699,7 @@ class ScrollLayout extends WPHPLayout<undefined, undefined> {
             const cd = pointDistance(ts[0].curr, ts[1].curr);
             this.zoom *= cd / pd;
             // Clamp zoom so we can't zoom out too far.
-            if (this.scroller.width < this.width / this.zoom) {
-                this.zoom = this.width / this.scroller.width;
-            }
-            if (this.scroller.height < this.height / this.zoom) {
-                this.zoom = this.height / this.scroller.height;
-            }
-            if (this.zoom > this.zoomMax) {
-                this.zoom = this.zoomMax;
-            }
+            this.clampZoom();
             const cm = this.p2c([
                 (ts[0].curr[0] + ts[1].curr[0]) * 0.5,
                 (ts[0].curr[1] + ts[1].curr[1]) * 0.5,
@@ -699,8 +707,7 @@ class ScrollLayout extends WPHPLayout<undefined, undefined> {
             this.scroll[0] += pm[0] - cm[0];
             this.scroll[1] += pm[1] - cm[1];
         }
-        this.scroll[0] = clamp(this.scroll[0], 0, this.scroller.width - this.width / this.zoom);
-        this.scroll[1] = clamp(this.scroll[1], 0, this.scroller.height - this.height / this.zoom);
+        this.clampScroll();
     }
 
     private p2c(p: Point2D): Point2D {
@@ -836,6 +843,9 @@ class ScrollLayout extends WPHPLayout<undefined, undefined> {
         this.top = top;
         this.width = width;
         this.height = height;
+
+        this.clampZoom();
+        this.clampScroll();
 
         this.scroller.layout(0, 0);
     }
