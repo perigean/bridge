@@ -18,6 +18,7 @@ export interface ElementContext {
     requestDraw(): void;
     requestLayout(): void;
     timer(handler: TimerHandler, duration: number | undefined): number;
+    clearTimer(id: number): void;
 };
 
 type ParameterlessHandler<State> = (ec: ElementContext, state: State) => void;
@@ -853,7 +854,7 @@ class ScrollLayout extends WPHPLayout<undefined, undefined> {
 
 export function Scroll(child: WSHSLayout<any, any>, scroll?: Point2D, zoom?: number, zoomMax?: number): ScrollLayout {
     // NB: scale of 0 is invalid anyways, so it's OK to be falsy.
-    return new ScrollLayout(child, scroll || [0, 0], zoom || 1, zoomMax || 10);
+    return new ScrollLayout(child, scroll || [0, 0], zoom || 1, zoomMax || 100);
 }
 
 // TODO: scrollx, scrolly

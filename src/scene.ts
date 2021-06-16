@@ -3,7 +3,7 @@
 import { Derivative } from "./ode.js";
 import { Point2D, pointDistance } from "./point.js";
 import { RungeKutta4 } from "./rk4.js";
-import { addChild, Bottom, Box, ElementContext, Fill, Flex, Layer, LayoutBox, LayoutTakesWidthAndHeight, Left, Mux, PanPoint, Position, PositionLayout, Relative, removeChild, Scroll, Switch } from "./ui/node.js";
+import { addChild, Bottom, Box, ElementContext, Fill, Flex, Layer, LayoutBox, LayoutTakesWidthAndHeight, Left, Mux, PanPoint, Position, PositionLayout, Relative, removeChild, Scroll, Switch, TimerHandler } from "./ui/node.js";
 
 export type Beam = {
     p1: number; // Index of pin at beginning of beam.
@@ -209,12 +209,26 @@ class SceneSimulator {
     private tLatest: number;                        // The highest time value simulated.
     private keyInterval: number;                      // Time per keyframe.
     private keyframes: Map<number, Float32Array>;   // Map of time to saved state.
+    private playTimer: number | undefined;
+    private playTime: number;
+    private playTick: TimerHandler;
 
     constructor(scene: SceneJSON, h: number, keyInterval: number) {
         this.h = h;
         this.tLatest = 0;
         this.keyInterval = keyInterval;
         this.keyframes = new Map();
+        this.playTimer = undefined;
+        this.playTime = 0;
+        this.playTick = (ms: number, ec: ElementContext) => {
+            // Only compute up to 100ms of frames per tick, to allow other things to happen if we are behind.
+            let t1 = Math.min(this.playTime + ms * 0.001, this.method.t + 0.1);
+            while (this.method.t < t1) {
+                this.next();
+            }
+            ec.requestDraw();
+        };
+
         const truss = scene.truss;
         
         // Cache fixed pin values.
@@ -497,34 +511,73 @@ class SceneSimulator {
         return this.keyframes.keys();
     }
 
-    seek(t: number) {
+    seek(t: number, ec: ElementContext) {
         const y = this.keyframes.get(t);
         if (y === undefined) {
             throw new Error(`${t} is not a keyframe time`);
         }
-        this.method.y = y;
+        for (let i = 0; i < y.length; i++) {
+            this.method.y[i] = y[i];
+        }
         this.method.t = t;
+
+        if (this.playTimer !== undefined) {
+            this.pause(ec);
+            this.play(ec);
+        }
     }
 
     time(): number {
         return this.method.t;
     }
 
-    next() {    // TODO: make this private?
+    private next() {    // TODO: make this private?
+        const prevT = this.method.t;
         this.method.next(this.h);
+        const isKeyframe = Math.floor(prevT / this.keyInterval) !== Math.floor(this.method.t / this.keyInterval);
         if (this.tLatest < this.method.t) {
-            this.keyframes.set(this.method.t, new Float32Array(this.method.y));
-            if (this.keyframes.size > 1 + Math.ceil(this.method.t / this.keyInterval)) {
-                this.keyframes.delete(this.tLatest);
+            if (isKeyframe) {
+                this.keyframes.set(this.method.t, new Float32Array(this.method.y));
             }
             this.tLatest = this.method.t;
+        } else if (isKeyframe) {
+            const y = this.keyframes.get(this.method.t);
+            if (y === undefined) {
+                console.log(`frame ${this.method.t} should be a keyframe`);
+                return;
+            }
+            let diff = false;
+            for (let i = 0; i < y.length; i++) {
+                if (y[i] !== this.method.y[i]) {
+                    diff = true;
+                }
+            }
+            if (diff) {
+                console.log(`Replaying frame ${this.method.t} produced a difference!`);
+            } else {
+                console.log(`Replaying frame ${this.method.t} produced the same state`);
+            }
         }
     }
 
-    simulate(until: number) {
-        while (this.method.t < until) {
-            this.next();
+    playing(): boolean {
+        return this.playTimer !== undefined;
+    }
+
+    play(ec: ElementContext) {
+        if (this.playTimer !== undefined) {
+            return;
         }
+        this.playTime = this.method.t;
+        this.playTimer = ec.timer(this.playTick, undefined);
+    }
+
+    pause(ec: ElementContext) {
+        if (this.playTimer === undefined) {
+            return;
+        }
+        ec.clearTimer(this.playTimer);
+        this.playTimer = undefined;
     }
 
     getPin(pin: number): Point2D {
@@ -539,15 +592,12 @@ class SceneSimulator {
     }
 };
 
-type OnResetSimulatorHandler = (ec: ElementContext) => void;
 type OnAddPinHandler = (editIndex: number, pin: number, ec: ElementContext) => void;
 type OnRemovePinHandler = (editIndex: number, pin: number, ec: ElementContext) => void;
-
 
 export class SceneEditor {
     scene: SceneJSON;
     private sim: SceneSimulator | undefined;
-    private onResetSimulatorHandlers: Array<OnResetSimulatorHandler>;
     private onAddPinHandlers: Array<OnAddPinHandler>;
     private onRemovePinHandlers: Array<OnRemovePinHandler>;
     editMaterial: number;
@@ -557,7 +607,6 @@ export class SceneEditor {
     constructor(scene: SceneJSON) {
         this.scene = scene;
         this.sim = undefined;
-        this.onResetSimulatorHandlers = [];
         this.onAddPinHandlers = [];
         this.onRemovePinHandlers = [];
         // TODO: proper initialization;
@@ -571,17 +620,6 @@ export class SceneEditor {
             this.sim = new SceneSimulator(this.scene, 0.001, 1);
         }
         return this.sim;
-    }
-
-    private resetSimulator(ec: ElementContext) {
-        this.sim = undefined;
-        for (const handler of this.onResetSimulatorHandlers) {
-            handler(ec);
-        }
-    }
-
-    onResetSimulator(handler: OnResetSimulatorHandler) {
-        this.onResetSimulatorHandlers.push(handler);
     }
 
     private doAddBeam(a: AddBeamAction, ec: ElementContext) {
@@ -716,7 +754,11 @@ export class SceneEditor {
         }
         this.undoAction(a, ec);
         this.scene.redoStack.push(a);
-        this.resetSimulator(ec);
+        // TODO: update simulator with saved state.
+        if (this.sim !== undefined) {
+            this.sim.pause(ec);
+            this.sim = undefined;
+        }
     }
 
     redo(ec: ElementContext): void {
@@ -726,7 +768,11 @@ export class SceneEditor {
         }
         this.doAction(a, ec);
         this.scene.undoStack.push(a);
-        this.resetSimulator(ec);
+        // TODO: update simulator with saved state.
+        if (this.sim !== undefined) {
+            this.sim.pause(ec);
+            this.sim = undefined;
+        }
     }
 
     private action(a: TrussAction, ec: ElementContext): void {
@@ -1390,44 +1436,44 @@ function undoButtonTap(_p: Point2D, ec: ElementContext, edit: SceneEditor) {
     }
 }
 
-function drawCircleWithArrow(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, ccw: boolean) {
-    ctx.beginPath();
-    const a = ccw ? Math.PI : 0;
-    const l = ccw ? -Math.PI * 0.4 : Math.PI * 0.4;
-    const px = r * Math.cos(a);
-    const py = r * Math.sin(a)
-    const tx = r * Math.cos(a - l) - px;
-    const ty = r * Math.sin(a - l) - py;
+function drawCircleWithArrow(ctx: CanvasRenderingContext2D, box: LayoutBox, ccw: boolean) {
+    const x = box.left + box.width * 0.5;
+    const y = box.top + box.height * 0.5;
+    const r = box.width * 0.333;
+
+    const b = ccw ? Math.PI * 0.75 : Math.PI * 0.25;
+    const e = ccw ? Math.PI * 1 : Math.PI * 2;
+    const l = ccw ? -Math.PI * 0.3 : Math.PI * 0.3;
+    const px = r * Math.cos(e);
+    const py = r * Math.sin(e)
+    const tx = r * Math.cos(e - l) - px;
+    const ty = r * Math.sin(e - l) - py;
     const nx = -ty / Math.sqrt(3);
     const ny = tx / Math.sqrt(3);
-    const b = ccw ? Math.PI * 1.25 : Math.PI * 0.25;
-    const e = ccw ? Math.PI * 2.75 : Math.PI * 1.75;
-    ctx.ellipse(x, y, r, r, 0, b, e);
-    ctx.stroke();
     
+    ctx.lineWidth = box.width * 0.1;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
     ctx.beginPath();
-    ctx.moveTo(x + px, y + py);
-    ctx.lineTo(x + px + tx + nx, y + py + ty + ny);
+    ctx.ellipse(x, y, r, r, 0, b, e, ccw);
+    ctx.moveTo(x + px + tx + nx, y + py + ty + ny);
+    ctx.lineTo(x + px, y + py);
     ctx.lineTo(x + px + tx - nx, y + py + ty - ny);
-    ctx.fill();
+    ctx.stroke();
+}
+
+function drawButtonBorder(ctx: CanvasRenderingContext2D, box: LayoutBox) {
+    ctx.fillRect(box.left, box.top, box.width, box.height);
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(box.left + 1, box.top + 1, box.width - 2, box.height - 2);
 }
 
 function undoButtonDraw(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, edit: SceneEditor) {
     ctx.fillStyle = "white";
-    ctx.fillRect(box.left, box.top, box.width, box.height);
-
-    const iconStyle = edit.undoCount() === 0 ? "gray" : "black";
-    ctx.strokeStyle = iconStyle;
-    ctx.fillStyle = iconStyle;
-    ctx.lineWidth = 8;
-    ctx.lineCap = "round";
-    drawCircleWithArrow(
-        ctx,
-        box.left + box.width * 0.5,
-        box.top + box.height * 0.5,
-        22,
-        true,
-    );
+    ctx.strokeStyle = edit.undoCount() === 0 ? "gray" : "black";
+    drawButtonBorder(ctx, box);
+    drawCircleWithArrow(ctx, box, true);
 }
 
 function undoButton(edit: SceneEditor) {
@@ -1442,54 +1488,99 @@ function redoButtonTap(_p: Point2D, ec: ElementContext, edit: SceneEditor) {
 
 function redoButtonDraw(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, edit: SceneEditor) {
     ctx.fillStyle = "white";
-    ctx.fillRect(box.left, box.top, box.width, box.height);
-
-    const iconStyle = edit.redoCount() === 0 ? "gray" : "black";
-    ctx.strokeStyle = iconStyle;
-    ctx.fillStyle = iconStyle;
-    ctx.lineWidth = 8;
-    ctx.lineCap = "round";
-    drawCircleWithArrow(
-        ctx,
-        box.left + box.width * 0.5,
-        box.top + box.height * 0.5,
-        22,
-        false,
-    );
+    ctx.strokeStyle = edit.redoCount() === 0 ? "gray" : "black";
+    drawButtonBorder(ctx, box);
+    drawCircleWithArrow(ctx, box, false);
 }
 
 function redoButton(edit: SceneEditor) {
     return Flex(64, 0, edit).onTap(redoButtonTap).onDraw(redoButtonDraw);
 }
-/*
-export function TabSelect(size: number, grow: number, child?: WPHPLayout<any, any>): FlexLayout<TabState, any> {
-    return Flex(size, grow, );
+
+function drawPlay(ctx: CanvasRenderingContext2D, box: LayoutBox) {
+    const x = box.left + box.width * 0.5;
+    const y = box.top + box.height * 0.5;
+    const r = box.width * 0.333;
+    const px = Math.cos(Math.PI * 0.333) * r;
+    const py = Math.sin(Math.PI * 0.333) * r;
+    ctx.lineWidth = box.width * 0.1;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(x - px, y + py);
+    ctx.lineTo(x - px, y - py);
+    ctx.lineTo(x + r, y);
+    ctx.closePath();
+    ctx.stroke();
 }
 
-type TabState = { active: boolean, i: number, selected: { i: number } };
-
-export function TabStrip(selectHeight: number, contentHeight: number, ...tabs: Array<[FlexLayout<TabState, any>, WPHPLayout<any, any>]>): WPHPLayout<any, any> {
-    const select = new Array<FlexLayout<TabState, any>>(tabs.length);
-    const content = new Array<[number, WPHPLayout<any, any>]>(tabs.length);
-    const selected = { i: 0 };
-    for (let i = 0; i < tabs.length; i++) {
-        select[i] = tabs[i][0];
-        content[i] = [i, tabs[i][1]];
-    }
-    const mux = Switch(tabs[0][0], ...content);
-    for (let i = 0; i < tabs.length; i++) {
-        select[i].onTap((_p: Point2D, ec: ElementContext, state: TabState) => {
-
-            state.active = true;
-            mux.set(ec, tabs[i][0]);
-        });
-    }
-    return Bottom(
-        Flex(contentHeight, 0, Left(...select)),
-        Flex(selectHeight, 0, mux),
-    );
+function drawPause(ctx: CanvasRenderingContext2D, box: LayoutBox) {
+    const x = box.left + box.width * 0.5;
+    const y = box.top + box.height * 0.5;
+    const r = box.width * 0.333;
+    const px = Math.cos(Math.PI * 0.333) * r;
+    const py = Math.sin(Math.PI * 0.333) * r;
+    ctx.lineWidth = box.width * 0.1;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(x + px, y + py);
+    ctx.lineTo(x + px, y - py);
+    ctx.moveTo(x - px, y + py);
+    ctx.lineTo(x - px, y - py);
+    ctx.stroke();
 }
-*/
+
+function playButton(edit: SceneEditor) {
+    return Flex(64, 0).onTap((_p: Point2D, ec: ElementContext) => {
+        const sim = edit.simulator();
+        if (sim.playing()) {
+            sim.pause(ec);
+        } else {
+            sim.play(ec);
+        }
+        ec.requestDraw();
+    }).onDraw((ctx: CanvasRenderingContext2D, box: LayoutBox) => {
+        drawButtonBorder(ctx, box);
+        if (edit.simulator().playing()) {
+            drawPause(ctx, box);
+        } else {
+            drawPlay(ctx, box);
+        }
+    });
+}
+
+function drawReset(ctx: CanvasRenderingContext2D, box: LayoutBox) {
+    const x = box.left + box.width * 0.5;
+    const y = box.top + box.height * 0.5;
+    const r = box.width * 0.333;
+    const px = Math.cos(Math.PI * 0.333) * r;
+    const py = Math.sin(Math.PI * 0.333) * r;
+    ctx.lineWidth = box.width * 0.1;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(x + px, y + py);
+    ctx.lineTo(x + px, y - py);
+    ctx.lineTo(x - r, y);
+    ctx.closePath();
+    ctx.moveTo(x - r, y + py);
+    ctx.lineTo(x - r, y - py);
+    ctx.stroke();
+}
+
+function resetButton(edit: SceneEditor) {
+    return Flex(64, 0).onTap((_p: Point2D, ec: ElementContext) => {
+        const sim = edit.simulator();
+        if (sim.playing()) {
+            sim.pause(ec);
+        }
+        sim.seek(0, ec);
+        ec.requestDraw();
+    }).onDraw((ctx: CanvasRenderingContext2D, box: LayoutBox) => {
+        drawButtonBorder(ctx, box);
+        drawReset(ctx, box);
+    });
+}
 
 export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
     const edit = new SceneEditor(sceneJSON);
@@ -1510,7 +1601,8 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
         1,
         Left(undoButton(edit), redoButton(edit)),
         Fill().onDraw(drawG),
-        Fill().onDraw(drawB),
+        Left(resetButton(edit), playButton(edit)),
+        //Fill().onDraw(drawB),   // TODO: reset button, play/pause button
     );
 
     return Layer(
@@ -1528,18 +1620,20 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
             ),
             Flex(64, 0,
                 Left(
-                    Flex(64, 0).onDraw(drawR).onTap((_p: Point2D, ec: ElementContext) => { tools.set(0, ec); sceneUI.set(ec, "terrain", "truss"); }),
-                    Flex(64, 0).onDraw(drawG).onTap((_p: Point2D, ec: ElementContext) => { tools.set(1, ec); sceneUI.set(ec, "terrain", "truss", "add_truss"); }),
+                    Flex(64, 0).onDraw(drawR).onTap((_p: Point2D, ec: ElementContext) => { tools.set(0, ec); sceneUI.set(ec, "terrain", "truss"); edit.simulator().pause(ec) }),
+                    Flex(64, 0).onDraw(drawG).onTap((_p: Point2D, ec: ElementContext) => { tools.set(1, ec); sceneUI.set(ec, "terrain", "truss", "add_truss"); edit.simulator().pause(ec); }),
                     Flex(64, 0).onDraw(drawB).onTap((_p: Point2D, ec: ElementContext) => {
                         tools.set(2, ec);
                         sceneUI.set(ec, "terrain", "simulate");
-                        ec.timer((t: number, ec: ElementContext) => {
-                            edit.simulator().simulate(t / 1000);
-                            ec.requestDraw();
-                        }, undefined);
+                        // TODO: simulation state stored in do/undo stacks.
                     }),
                 ),
             ),
         ),
     );
+    // TODO: save/load
+    // Have list of levels in some JSON resource file.
+    // Have option to load json file from local.
+    // auto-save every n seconds after change, key in local storage is uri of level json.
+    // when loading, check local storage and load that instead if it exists (and the non editable parts match?)
 }
