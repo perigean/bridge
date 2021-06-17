@@ -1262,11 +1262,11 @@ type CreateBeamPinState = {
 
 function createBeamPinOnDraw(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, state: CreateBeamPinState) {
     const truss = state.edit.scene.truss;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 0.5;
     ctx.strokeStyle = "black";
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
-    ctx.strokeRect(box.left + 1, box.top + 1, box.width - 2, box.height - 2);
+    ctx.strokeRect(box.left, box.top, box.width, box.height);
     
     if (state.drag === undefined) {
         return;
@@ -1281,7 +1281,7 @@ function createBeamPinOnDraw(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec:
 
 function createBeamPinOnPan(ps: Array<PanPoint>, ec: ElementContext, state: CreateBeamPinState) {
     const truss = state.edit.scene.truss;
-    const i = trussGetClosestPin(truss, ps[0].curr, 8, state.i);
+    const i = trussGetClosestPin(truss, ps[0].curr, 2, state.i);
     state.drag = {
         p: ps[0].curr,
         i,
@@ -1307,7 +1307,7 @@ function CreateBeamPin(edit: SceneEditor, i: number): PositionLayout<any, any> {
     const truss = edit.scene.truss;
     const p = trussGetPin(truss, i);
     // If we had state that was passed to all handlers, then we could avoid allocating new handlers per Element.
-    return Position<CreateBeamPinState>(p[0] - 8, p[1] - 8, 16, 16, { edit, i })
+    return Position<CreateBeamPinState>(p[0] - 2, p[1] - 2, 4, 4, { edit, i })
         .onDraw(createBeamPinOnDraw)
         .onPan(createBeamPinOnPan)
         .onPanEnd(createBeamPinOnPanEnd);
@@ -1602,7 +1602,6 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
         Left(undoButton(edit), redoButton(edit)),
         Fill().onDraw(drawG),
         Left(resetButton(edit), playButton(edit)),
-        //Fill().onDraw(drawB),   // TODO: reset button, play/pause button
     );
 
     return Layer(
@@ -1612,7 +1611,7 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
                 sceneUI,
             ),
             undefined,
-            2,
+            16,
         ),
         Bottom(
             Flex(64, 0,
@@ -1631,6 +1630,11 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
             ),
         ),
     );
+    // TODO: fix scale, fix materials
+    // need to fix TouchGesture to change the threshold from a drag to be based on the zoom. which needs ScrollLayout to update the ElementContext is passed to children (and to include screen scaling stuff on ec)
+
+    // TODO: material selection. (might need text layout, which is a whole can of worms...)
+
     // TODO: save/load
     // Have list of levels in some JSON resource file.
     // Have option to load json file from local.

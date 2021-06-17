@@ -19,6 +19,7 @@ export interface ElementContext {
     requestLayout(): void;
     timer(handler: TimerHandler, duration: number | undefined): number;
     clearTimer(id: number): void;
+    zoom(): number;
 };
 
 type ParameterlessHandler<State> = (ec: ElementContext, state: State) => void;
@@ -66,7 +67,7 @@ class TouchGesture<State> {
                 const a = this.active.get(t.id);
                 if (a != undefined) {
                     // TODO: pass in distance threshold? Scale base on transforms?
-                    if (pointDistance(a, t.p) >= 16) {
+                    if (pointDistance(a, t.p) >= 16 / ec.zoom()) {
                         this.active.delete(t.id);
                         this.pans.set(t.id, {
                             prev: a,
@@ -493,6 +494,10 @@ class RootElementContext implements ElementContext {
         }
     }
 
+    zoom(): number {
+        return 1;
+    }
+
     setViewport(width: number, height: number) {
         this.vp.width = width;
         this.vp.height = height;
@@ -653,6 +658,47 @@ export class RootLayout {
     }
 };
 
+class ScrollElementContext implements ElementContext {
+    parent: ElementContext | undefined;
+    scroll: ScrollLayout;
+
+    constructor(scroll: ScrollLayout) {
+        this.parent = undefined;
+        this.scroll = scroll;
+    }
+
+    requestDraw(): void {
+        if (this.parent === undefined) {
+            throw new Error("ElementContext.requestDraw called outside of callback");
+        }
+        this.parent.requestDraw();
+    }
+    requestLayout(): void {
+        if (this.parent === undefined) {
+            throw new Error("ElementContext.requestLayout called outside of callback");
+        }
+        this.parent.requestLayout();
+    }
+    timer(handler: TimerHandler, duration: number | undefined): number {
+        if (this.parent === undefined) {
+            throw new Error("ElementContext.timer called outside of callback");
+        }
+        return this.parent.timer(handler, duration);
+    }
+    clearTimer(id: number): void {
+        if (this.parent === undefined) {
+            throw new Error("ElementContext.clearTimer called outside of callback");
+        }
+        this.clearTimer(id);
+    }
+    zoom(): number {
+        if (this.parent === undefined) {
+            throw new Error("ElementContext.zoom called outside of callback");
+        }
+        return this.parent.zoom() * this.scroll.zoom;
+    }
+};
+
 // TODO: Have acceleration structures. (so hide children, and forward tap/pan/draw manually, with transform)
 // TODO: convert to use Affine transform.
 
@@ -666,6 +712,7 @@ class ScrollLayout extends WPHPLayout<undefined, undefined> {
     private touchTargets: Map<number, HasTouchHandlers<unknown> | TARGET_ROOT | TARGET_NONE>;
     private touchScroll: Map<number, { prev: Point2D, curr: Point2D }>;
     private touchTargetDetached: OnDetachHandler<unknown>;
+    private ec: ScrollElementContext;
 
     private clampZoom() {
         if (this.scroller.width < this.width / this.zoom) {
@@ -729,6 +776,7 @@ class ScrollLayout extends WPHPLayout<undefined, undefined> {
         this.zoomMax = zoomMax;
         this.touchTargets = new Map();
         this.touchScroll = new Map();
+        this.ec = new ScrollElementContext(this);
         this.touchTargetDetached = (e: Element<any, any, any>) => {
             let foundTarget = false;
             for (const [k, v] of this.touchTargets) {
@@ -763,7 +811,9 @@ class ScrollLayout extends WPHPLayout<undefined, undefined> {
                 width: this.width / this.zoom,
                 height: this.height / this.zoom,
             };
-            drawElementTree(ctx, this.scroller, ec, vpScroller);
+            this.ec.parent = ec;
+            drawElementTree(ctx, this.scroller, this.ec, vpScroller);
+            this.ec.parent = undefined;
             // TODO: restore transform in a finally?
             ctx.restore();
         };
@@ -778,7 +828,9 @@ class ScrollLayout extends WPHPLayout<undefined, undefined> {
             } else {
                 this.touchTargets.set(id, target);
                 target.onDetach(this.touchTargetDetached);
-                target.onTouchBeginHandler(id, cp, ec, target.state);
+                this.ec.parent = ec;
+                target.onTouchBeginHandler(id, cp, this.ec, target.state);
+                this.ec.parent = undefined;
             }
         };
         this.onTouchMoveHandler = (ts: Array<TouchMove>, ec: ElementContext) => {
@@ -814,7 +866,9 @@ class ScrollLayout extends WPHPLayout<undefined, undefined> {
                         p: this.p2c(tts[i].p),
                     };
                 }
-                target.onTouchMoveHandler(tts, ec, target.state);
+                this.ec.parent = ec;
+                target.onTouchMoveHandler(tts, this.ec, target.state);
+                this.ec.parent = undefined;
             }
             ec.requestDraw();
         };
@@ -832,7 +886,9 @@ class ScrollLayout extends WPHPLayout<undefined, undefined> {
                 this.touchTargets.delete(id);
                 target.removeOnDetach(this.touchTargetDetached);
                 if (target.onTouchEndHandler !== undefined) {
-                    target.onTouchEndHandler(id, ec, target.state);
+                    this.ec.parent = ec;
+                    target.onTouchEndHandler(id, this.ec, target.state);
+                    this.ec.parent = undefined;
                 }
             }
         };
