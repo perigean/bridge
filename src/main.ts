@@ -18,7 +18,7 @@ const scene : SceneJSON = {
         discs: [],
         materials: [
             {   // Rubber.
-                E: 70000000.0,
+                E: 700000000.0,
                 style: "black",
                 density: 1200.0,
                 friction: 0.9,

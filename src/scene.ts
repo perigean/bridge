@@ -611,7 +611,7 @@ export class SceneEditor {
         this.onRemovePinHandlers = [];
         // TODO: proper initialization;
         this.editMaterial = 0;
-        this.editWidth = 4;
+        this.editWidth = 1;
         this.editDeck = true;
     }
 
@@ -1368,7 +1368,7 @@ function drawBeam(ctx: CanvasRenderingContext2D, p1: Point2D, p2: Point2D, w: nu
     ctx.stroke();
     if (deck !== undefined && deck) {
         ctx.strokeStyle = "brown";  // TODO: deck style
-        ctx.lineWidth = 2;
+        ctx.lineWidth = w * 0.75;
         ctx.beginPath();
         ctx.moveTo(p1[0], p1[1]);
         ctx.lineTo(p2[0], p2[1]);
@@ -1480,21 +1480,31 @@ function undoButton(edit: SceneEditor) {
     return Flex(64, 0, edit).onTap(undoButtonTap).onDraw(undoButtonDraw);
 }
 
-function redoButtonTap(_p: Point2D, ec: ElementContext, edit: SceneEditor) {
-    if (edit.redoCount() > 0) {
-        edit.redo(ec);
-    }
-}
-
-function redoButtonDraw(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, edit: SceneEditor) {
-    ctx.fillStyle = "white";
-    ctx.strokeStyle = edit.redoCount() === 0 ? "gray" : "black";
-    drawButtonBorder(ctx, box);
-    drawCircleWithArrow(ctx, box, false);
-}
-
 function redoButton(edit: SceneEditor) {
-    return Flex(64, 0, edit).onTap(redoButtonTap).onDraw(redoButtonDraw);
+    return Flex(64, 0, edit).onTap((_p: Point2D, ec: ElementContext, edit: SceneEditor) => {
+        if (edit.redoCount() > 0) {
+            edit.redo(ec);
+        }
+    }).onDraw((ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, edit: SceneEditor) => {
+        ctx.fillStyle = "white";
+        ctx.strokeStyle = edit.redoCount() === 0 ? "gray" : "black";
+        drawButtonBorder(ctx, box);
+        drawCircleWithArrow(ctx, box, false);
+    });
+}
+
+function deckButton(edit: SceneEditor) {
+    return Flex(64, 0, edit).onTap((_p: Point2D, ec: ElementContext, edit: SceneEditor) => {
+        edit.editDeck = !edit.editDeck;
+        ec.requestDraw();
+    }).onDraw((ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, edit: SceneEditor) => {
+        ctx.fillStyle = "white";
+        drawButtonBorder(ctx, box);
+        const x = box.left + box.width * 0.5;
+        const y = box.top + box.height * 0.5;
+        const r = box.width * 0.333;
+        drawBeam(ctx, [x - r, y], [x +  r, y], 16, "black", edit.editDeck);
+    });
 }
 
 function drawPlay(ctx: CanvasRenderingContext2D, box: LayoutBox) {
@@ -1577,8 +1587,17 @@ function resetButton(edit: SceneEditor) {
         sim.seek(0, ec);
         ec.requestDraw();
     }).onDraw((ctx: CanvasRenderingContext2D, box: LayoutBox) => {
+        ctx.fillStyle = "white";
+        ctx.strokeStyle = "black";
         drawButtonBorder(ctx, box);
         drawReset(ctx, box);
+    });
+}
+
+function tabFiller() {
+    return Flex(0, 1).touchSink().onDraw((ctx: CanvasRenderingContext2D, box: LayoutBox) => {
+        ctx.fillStyle = "gray";
+        ctx.fillRect(box.left, box.top, box.width, box.height);
     });
 }
 
@@ -1599,9 +1618,9 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
 
     const tools = Switch(
         1,
-        Left(undoButton(edit), redoButton(edit)),
-        Fill().onDraw(drawG),
-        Left(resetButton(edit), playButton(edit)),
+        Left(undoButton(edit), redoButton(edit), tabFiller()),
+        Left(deckButton(edit), tabFiller()),
+        Left(resetButton(edit), playButton(edit), tabFiller()),
     );
 
     return Layer(
@@ -1624,14 +1643,18 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
                     Flex(64, 0).onDraw(drawB).onTap((_p: Point2D, ec: ElementContext) => {
                         tools.set(2, ec);
                         sceneUI.set(ec, "terrain", "simulate");
-                        // TODO: simulation state stored in do/undo stacks.
                     }),
                 ),
             ),
         ),
     );
-    // TODO: fix scale, fix materials
-    // need to fix TouchGesture to change the threshold from a drag to be based on the zoom. which needs ScrollLayout to update the ElementContext is passed to children (and to include screen scaling stuff on ec)
+    // TODO: fix materials
+
+    // TODO: simulation state stored in do/undo stacks.
+
+    // TODO: fix train simulation (make sure train can break apart, make only front disk turn, back disks have low friction?)
+    // TODO: mode where if the whole train makes it across, the train teleports back to the beginning and gets heavier
+    // TODO: draw train
 
     // TODO: material selection. (might need text layout, which is a whole can of worms...)
 

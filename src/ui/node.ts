@@ -201,6 +201,10 @@ class Element<LayoutType extends string, Child extends ChildConstraint<string>, 
         this.touchGesture.onPanEndHandler = handler;
         return this;
     }
+    touchSink(): this {
+        this.touchGesture = initTouchGesture(this);
+        return this;
+    }
 
     onDetachHandler?: OnDetachHandler<State> | Array<OnDetachHandler<State>>;
     onDetach(handler: OnDetachHandler<State>): this {
@@ -1175,11 +1179,11 @@ class LeftFlexLayout<State> extends WPHPLayout<StaticArray<FlexLayout<any, any>>
             sumGrow += c.grow;
         }
         let childLeft = left;
-        let extra = height - sumSize;
+        let extra = width - sumSize;
         for (const c of this.child) {
             let childWidth = c.size;
             if (c.grow !== 0) {
-                childWidth += extra * c.grow / sumGrow;
+                childWidth = Math.max(childWidth + extra * c.grow / sumGrow, 0);
             }
             c.layout(childLeft, top, childWidth, height);
             childLeft += childWidth;
