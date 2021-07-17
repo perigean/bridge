@@ -7,15 +7,17 @@ import { RootLayout, Border } from "./ui/node.js"
 
 const scene : SceneJSON = {
     truss: {
-        fixedPins: [[0, 64], [32, 64], [96, 64], [512, 64]],
-        startPins: [],
+        fixedPins: [[0, 64], [32, 64], [96, 64], [128, 64]],
+        startPins: [[16, 54]],
         editPins: [],
         startBeams: [
             { p1: -4, p2: -3, m: 0, w: 1, deck: true },
             { p1: -2, p2: -1, m: 0, w: 1, deck: true },
         ],
         editBeams: [],
-        discs: [],
+        discs: [
+            { p: 0, r: 10, m: 0, v: -10.0 },
+        ],
         materials: [
             {   // Rubber.
                 E: 700000000.0,
@@ -26,7 +28,7 @@ const scene : SceneJSON = {
         ],
     },
     terrain: {
-        hmap: [64, 64, 64, 96, 96, 96, 64, 64, 64],
+        hmap: [64, 64, 64, 96, 96, 96, 72, 72, 72],
         friction: 0.5,
         style: "darkgrey",
     },
@@ -210,6 +212,7 @@ gesture.addGestureHandler(new PanGesture(vp));
 gesture.addGestureHandler(new PinchZoomGesture(vp));
 */
 
+// TODO: mode where we read accelerometer, and add that to acceleration due to gravity. (scale based on screen size and zoom)
 
 // TODO: mouse and trackpad input
 // scroll

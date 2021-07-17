@@ -165,6 +165,7 @@ type SimulationHMap = Array<{
     nx: number; // Outward (direction of bounce) normal unit vector.
     ny: number;
     decks: Array<SimulationBeam>;   // Updated every frame, all decks above this segment.
+    decksLeft: Array<number>;       // Leftmost index in hmap of deck at same index in decks.
     deckCount: number;  // Number of indices in decks being used.
 }>;
 
@@ -294,6 +295,7 @@ class SceneSimulator {
                     nx: 0.0,
                     ny:-1.0,
                     decks: [],
+                    decksLeft: [],
                     deckCount: 0,
                 };
             }
@@ -304,15 +306,17 @@ class SceneSimulator {
                 nx: dy / l,
                 ny: -pitch / l,
                 decks: [],
+                decksLeft: [],
                 deckCount: 0,
             };
         });
-        function hmapAddDeck(i: number, d: SimulationBeam) {
+        function hmapAddDeck(i: number, left: number, d: SimulationBeam) {
             if (i < 0 || i >= hmap.length) {
                 return;
             }
             const h = hmap[i];
             h.decks[h.deckCount] = d;
+            h.decksLeft[h.deckCount] = left;
             h.deckCount++;
         }
         
@@ -391,11 +395,11 @@ class SceneSimulator {
                 setdx(dydt, i, getvx(y, i));
                 setdy(dydt, i, getvy(y, i));
             }
-
+            const dampK = 1;
             // Acceleration due to gravity.
             for (let i = 0; i < movingPins; i++) {
-                setvx(dydt, i, g[0]);
-                setvy(dydt, i, g[1]);
+                setvx(dydt, i, g[0] - dampK * getvx(y, i));
+                setvy(dydt, i, g[1] - dampK * getvy(y, i));
             }
 
             // Decks are updated in hmap in the below loop through beams, so clear the previous values.
@@ -407,6 +411,16 @@ class SceneSimulator {
             for (const beam of beams) {
                 const p1 = beam.p1;
                 const p2 = beam.p2;
+                // Add decks to accleration structure
+                if (beam.deck) {
+                    const i1 = Math.floor(getdx(y, p1) / pitch);
+                    const i2 = Math.floor(getdx(y, p2) / pitch);
+                    const begin = Math.min(i1, i2);
+                    const end = Math.max(i1, i2);
+                    for (let i = begin; i <= end; i++) {
+                        hmapAddDeck(i, begin, beam);
+                    }
+                }
                 if (p1 < 0 && p2 < 0) {
                     // Both ends are not moveable.
                     continue;
@@ -425,38 +439,6 @@ class SceneSimulator {
                 // Beam stress force.
                 force(dydt, p1, ux * springF, uy * springF);
                 force(dydt, p2, -ux * springF, -uy * springF);
-
-                // Damping force.
-                const zeta = 0.5;
-                const vx = getvx(y, p2) - getvx(y, p1); // Velocity of p2 relative to p1.
-                const vy = getvy(y, p2) - getvy(y, p1);
-                const v = vx * ux + vy * uy;    // Velocity of p2 relative to p1 in direction of beam.
-                if (p1 >= 0 && p2 >= 0) {
-                    const m1 = mass[p1];
-                    const m2 = mass[p2];
-                    const dampF = v * zeta * Math.sqrt(k * m1 * m2 / (m1 + m2));
-                    force(dydt, p1, ux * dampF, uy * dampF);
-                    force(dydt, p2, -ux * dampF, -uy * dampF);
-                } else if (p1 >= 0) {
-                    const m1 = mass[p1];
-                    const dampF = v * zeta * Math.sqrt(k * m1);
-                    force(dydt, p1, ux * dampF, uy * dampF);
-                } else if (p2 >= 0) {
-                    const m2 = mass[p2];
-                    const dampF = v * zeta * Math.sqrt(k * m2);
-                    force(dydt, p2, -ux * dampF, -uy * dampF);
-                }
-
-                // Add decks to accleration structure
-                if (beam.deck) {
-                    const i1 = Math.floor(getdx(y, p1) / pitch);
-                    const i2 = Math.floor(getdx(y, p2) / pitch);
-                    const begin = Math.min(i1, i2);
-                    const end = Math.max(i1, i2);
-                    for (let i = begin; i <= end; i++) {
-                        hmapAddDeck(i, beam);
-                    }
-                }
             }
 
             // Acceleration due to terrain collision
@@ -465,7 +447,7 @@ class SceneSimulator {
                 const dx = getdx(y, i); // Pin position.
                 const dy = getdy(y, i);
                 const m = mass[i];
-                let bounceF = 1000.0 * m; // Acceleration per metre of depth under terrain.
+                let bounceF = 1000.0 * m; // Force per metre of depth under terrain.
                 let nx; // Terrain unit normal (direction of acceleration).
                 let ny;
                 if (dx < 0.0) {
@@ -500,7 +482,96 @@ class SceneSimulator {
                 // TODO: why did this need to cap the acceleration? maybe bounce force is too high?
                 //const af = Math.min(tFriction * at, Math.abs(tv * 100)) * (tv >= 0.0 ? -1.0 : 1.0);
             }
-            // TODO: discs
+            for (const disc of discs) {
+                const r = disc.r;
+                const m = mass[disc.p];
+                const dx = getdx(y, disc.p);
+                // Loop through all hmap buckets that disc overlaps.
+                const i1 = Math.floor((dx - r) / pitch);
+                const i2 = Math.floor((dx + r) / pitch);
+                for (let i = i1; i <= i2; i++) {
+                    if (i < 0 || i >= hmap.length) {
+                        continue;
+                    }
+                    const decks = hmap[i].decks;
+                    const deckCount = hmap[i].deckCount;
+                    for (let j = 0; j < deckCount; j++) {
+                        if (i !== Math.max(i1, hmap[i].decksLeft[j])) {
+                            // Only compute collision if the bucket we are in is the leftmost
+                            // one that contains both the deck and the disc.
+                            continue;
+                        }
+                        const deck = decks[j];
+                        const dy = getdy(y, disc.p);
+                        const x1 = getdx(y, deck.p1);
+                        const y1 = getdy(y, deck.p1);
+                        const x2 = getdx(y, deck.p2);
+                        const y2 = getdy(y, deck.p2);
+                        
+                        // Is collision happening?
+                        const sx = x2 - x1; // Vector to end of deck (from start)
+                        const sy = y2 - y1;
+                        const cx = dx - x1; // Vector to centre of disc (from start of deck)
+                        const cy = dy - y1;
+                        const a = sx * sx + sy * sy;
+                        const b = -2.0 * (cx * sx + cy * sy);
+                        const c = cx * cx + cy * cy - r * r;
+                        const D = b * b - 4.0 * a * c;
+                        if (D <= 0.0) {
+                            continue;   // No Real solutions to intersection.
+                        }
+                        const rootD = Math.sqrt(D);
+                        let t = -b / (2.0 * a);
+                        let t1 = (-b - rootD) / (2.0 * a);
+                        let t2 = (-b + rootD) / (2.0 * a);
+                        if ((t1 <= 0.0 && t2 <= 0.0) || (t1 >= 1.0 && t2 >= 0.0)) {
+                            continue;   // Intersections are both before or after deck.
+                        }
+                        t = Math.max(Math.min(t, 1.0), 0.0);
+                        t1 = Math.max(t1, 0.0);
+                        t2 = Math.min(t2, 1.0);
+    
+                        // Compute collision acceleration.
+                        // Acceleration is proportional to area 'shadowed' in the disc by the intersecting deck.
+                        // This is so that as a disc moves between two deck segments, the acceleration remains constant.
+                        const t1x = (1 - t1) * x1 + t1 * x2 - dx;   // Circle centre -> t1 intersection.
+                        const t1y = (1 - t1) * y1 + t1 * y2 - dy;
+                        const t2x = (1 - t2) * x1 + t2 * x2 - dx;   // Circle centre -> t2 intersection.
+                        const t2y = (1 - t2) * y1 + t2 * y2 - dy;
+                        const ta = Math.abs(Math.atan2(t1y, t1x) - Math.atan2(t2y, t2x)) % Math.PI;
+                        const area = 0.5 * r * r * ta - 0.5 * Math.abs(t1x * t2y - t1y * t2x);
+                        const f = 1000.0 * m * area / r;   // TODO: figure out the force.
+                        let nx = cx - sx * t;
+                        let ny = cy - sy * t;
+                        const l = Math.sqrt(nx * nx + ny * ny);
+                        nx /= l;
+                        ny /= l;
+    
+                        // Apply force to the disc.
+                        force(dydt, disc.p, nx * f, ny * f);
+
+                        // apply accleration distributed to pins
+                        force(dydt, deck.p1, -nx * f * (1 - t), -ny * f * (1 - t));
+                        force(dydt, deck.p2, -nx * f * t, -ny * f * t);
+
+                        // Compute friction.
+                        // Get relative velocity.
+                        const vx = getvx(y, disc.p) - (1.0 - t) * getvx(y, deck.p1) - t * getvx(y, deck.p2);
+                        const vy = getvy(y, disc.p) - (1.0 - t) * getvy(y, deck.p1) - t * getvy(y, deck.p2);
+                        //const vn = vx * nx + vy * ny;
+                        const tx = ny;
+                        const ty = -nx;
+                        const vt = vx * tx + vy * ty - disc.v;
+                        // Totally unscientific way to compute friction from arbitrary constants.
+                        const friction = Math.sqrt(materials[disc.m].friction * materials[deck.m].friction);
+                        const ff = f * friction * (vt <= 0.0 ? 1.0 : -1.0);
+                        //const damp = 2;   // TODO: figure out how to derive a reasonable constant.
+                        force(dydt, disc.p, tx * ff, ty * ff);
+                        force(dydt, deck.p1, -tx * ff * (1 - t), -ty * ff * (1 - t));
+                        force(dydt, deck.p2, -tx * ff * t, -ty * ff * t);
+                    }
+                }
+            }
         }
 
         this.method = new RungeKutta4(y0, this.dydt);
@@ -813,7 +884,7 @@ export class SceneEditor {
     ): void {
         const truss = this.scene.truss;
         trussAssertPin(truss, p2);
-        const p1 = this.scene.truss.editPins.length;
+        const p1 = truss.startPins.length + truss.editPins.length;
         this.action({type: "composite", actions: [
             { type: "add_pin", pin},
             {
@@ -1376,33 +1447,45 @@ function drawBeam(ctx: CanvasRenderingContext2D, p1: Point2D, p2: Point2D, w: nu
     }
 }
 
-function trussLayerOnDraw(ctx: CanvasRenderingContext2D, _box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, truss: Truss) {
-    for (const b of truss.startBeams) {
-        drawBeam(ctx, trussGetPin(truss, b.p1), trussGetPin(truss, b.p2), b.w, truss.materials[b.m].style, b.deck);
-    }
-    for (const b of truss.editBeams) {
-        drawBeam(ctx, trussGetPin(truss, b.p1), trussGetPin(truss, b.p2), b.w, truss.materials[b.m].style, b.deck);
-    }
-}
-
 function TrussLayer(truss: Truss): LayoutTakesWidthAndHeight {
-    return Fill(truss).onDraw(trussLayerOnDraw);
-}
-
-function simulateLayerOnDraw(ctx: CanvasRenderingContext2D, _box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, edit: SceneEditor) {
-    const scene = edit.scene;
-    const truss = scene.truss;
-    const sim = edit.simulator();
-    for (const b of truss.startBeams) {
-        drawBeam(ctx, sim.getPin(b.p1), sim.getPin(b.p2), b.w, truss.materials[b.m].style, b.deck);
-    }
-    for (const b of truss.editBeams) {
-        drawBeam(ctx, sim.getPin(b.p1), sim.getPin(b.p2), b.w, truss.materials[b.m].style, b.deck);
-    }
+    return Fill(truss).onDraw((ctx: CanvasRenderingContext2D, _box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, truss: Truss) => {
+        for (const b of truss.startBeams) {
+            drawBeam(ctx, trussGetPin(truss, b.p1), trussGetPin(truss, b.p2), b.w, truss.materials[b.m].style, b.deck);
+        }
+        for (const b of truss.editBeams) {
+            drawBeam(ctx, trussGetPin(truss, b.p1), trussGetPin(truss, b.p2), b.w, truss.materials[b.m].style, b.deck);
+        }
+        for (const d of truss.discs) {
+            const m = truss.materials[d.m];
+            const p = trussGetPin(truss, d.p);
+            ctx.fillStyle = m.style;
+            ctx.beginPath();
+            ctx.ellipse(p[0], p[1], d.r, d.r, 0, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+    });
 }
 
 function SimulateLayer(edit: SceneEditor): LayoutTakesWidthAndHeight {
-    return Fill(edit).onDraw(simulateLayerOnDraw);
+    return Fill(edit).onDraw((ctx: CanvasRenderingContext2D, _box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, edit: SceneEditor) => {
+        const scene = edit.scene;
+        const truss = scene.truss;
+        const sim = edit.simulator();
+        for (const b of truss.startBeams) {
+            drawBeam(ctx, sim.getPin(b.p1), sim.getPin(b.p2), b.w, truss.materials[b.m].style, b.deck);
+        }
+        for (const b of truss.editBeams) {
+            drawBeam(ctx, sim.getPin(b.p1), sim.getPin(b.p2), b.w, truss.materials[b.m].style, b.deck);
+        }
+        for (const d of truss.discs) {
+            const m = truss.materials[d.m];
+            const p = sim.getPin(d.p);
+            ctx.fillStyle = m.style;
+            ctx.beginPath();
+            ctx.ellipse(p[0], p[1], d.r, d.r, 0, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+    });
 }
 
 function drawTerrain(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, vp: LayoutBox, terrain: Terrain) {
@@ -1648,6 +1731,13 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
             ),
         ),
     );
+
+    // TODO: single global damping force based on speed. Forget damping beams?
+
+    // TODO: scroll to zoom, mouse cursor counts as a tap. (use pointer events?)
+
+    // TODO: max beam length (from material. make it depend on width? Maybe just have a buckling force done properly and it takes care of itself...)
+
     // TODO: fix materials
 
     // TODO: simulation state stored in do/undo stacks.

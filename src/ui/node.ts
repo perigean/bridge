@@ -521,7 +521,6 @@ export class RootLayout {
     ec: RootElementContext;
     child: WPHPLayout<any, any>;
     canvas: HTMLCanvasElement;
-    //ctx: CanvasRenderingContext2D;
     resize: ResizeObserver;
 
     private touchTargets: Map<number, HasTouchHandlers<any> | TARGET_ROOT | TARGET_NONE>;
