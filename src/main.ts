@@ -7,16 +7,30 @@ import { RootLayout, Border } from "./ui/node.js"
 
 const scene : SceneJSON = {
     truss: {
-        fixedPins: [[0, 64], [32, 64], [96, 64], [128, 64]],
-        startPins: [[16, 54]],
+        fixedPins: [[0, 64], [64, 64], [192, 64], [256, 64]],
+        startPins: [[2, 62], [12, 62], [17, 62], [27, 62], [32, 62], [42, 62], [47, 62], [57, 62]],
         editPins: [],
         startBeams: [
             { p1: -4, p2: -3, m: 0, w: 1, deck: true },
             { p1: -2, p2: -1, m: 0, w: 1, deck: true },
+            { p1: 0, p2: 1, m: 0, w: 2 },
+            { p1: 1, p2: 2, m: 0, w: 0.1 },
+            { p1: 2, p2: 3, m: 0, w: 2 },
+            { p1: 3, p2: 4, m: 0, w: 0.1 },
+            { p1: 4, p2: 5, m: 0, w: 2 },
+            { p1: 5, p2: 6, m: 0, w: 0.1 },
+            { p1: 6, p2: 7, m: 0, w: 2 },
         ],
         editBeams: [],
         discs: [
-            { p: 0, r: 10, m: 0, v: -10.0 },
+            { p: 0, r: 2, m: 0, v: -10.0 },
+            { p: 1, r: 2, m: 0, v: -10.0 },
+            { p: 2, r: 2, m: 0, v: -10.0 },
+            { p: 3, r: 2, m: 0, v: -10.0 },
+            { p: 4, r: 2, m: 0, v: -10.0 },
+            { p: 5, r: 2, m: 0, v: -10.0 },
+            { p: 6, r: 2, m: 0, v: -10.0 },
+            { p: 7, r: 2, m: 0, v: -10.0 },
         ],
         materials: [
             {   // Rubber.
@@ -28,12 +42,12 @@ const scene : SceneJSON = {
         ],
     },
     terrain: {
-        hmap: [64, 64, 64, 96, 96, 96, 72, 72, 72],
+        hmap: [64, 64, 64, 96, 112, 96, 64, 64, 64],
         friction: 0.5,
         style: "darkgrey",
     },
     height: 128,
-    width: 128,
+    width: 256,
     g: [0, 128],
     undoStack: [],
     redoStack: [],
