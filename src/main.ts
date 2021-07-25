@@ -8,9 +8,9 @@ import { RootLayout, Border } from "./ui/node.js"
 const scene : SceneJSON = {
     truss: {
         fixedPins: [[0, 64], [64, 64], [192, 64], [256, 64]],
-        startPins: [[2, 62], [12, 62], [17, 62], [27, 62], [32, 62], [42, 62], [47, 62], [57, 62]],
+        trainPins: [[2, 62], [12, 62], [17, 62], [27, 62], [32, 62], [42, 62], [47, 62], [57, 62]],
         editPins: [],
-        startBeams: [
+        trainBeams: [
             { p1: -4, p2: -3, m: 0, w: 1, deck: true },
             { p1: -2, p2: -1, m: 0, w: 1, deck: true },
             { p1: 0, p2: 1, m: 0, w: 2 },
@@ -38,6 +38,7 @@ const scene : SceneJSON = {
                 style: "black",
                 density: 1200.0,
                 friction: 0.9,
+                maxLength: 32.0,
             },
         ],
     },

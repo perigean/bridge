@@ -35,14 +35,15 @@ export type Material = {
     density: number;    // kg/m^3
     style: string | CanvasGradient | CanvasPattern;
     friction: number;
+    maxLength: number;
     // TODO: when stuff breaks, work hardening, etc.
 };
 
 export type Truss = {
     fixedPins: Array<Point2D>;
-    startPins: Array<Point2D>;
+    trainPins: Array<Point2D>;
     editPins: Array<Point2D>;
-    startBeams: Array<Beam>;
+    trainBeams: Array<Beam>;
     editBeams: Array<Beam>;
     discs: Array<Disc>;
     materials: Array<Material>;
@@ -56,7 +57,7 @@ function trussAssertMaterial(truss: Truss, m: number) {
 }
 
 function trussAssertPin(truss: Truss, pin: number) {
-    if (pin < -truss.fixedPins.length || pin >= truss.startPins.length + truss.editPins.length) {
+    if (pin < -truss.fixedPins.length || pin >= truss.trainPins.length + truss.editPins.length) {
         throw new Error(`Unknown pin index ${pin}`);
     }
 }
@@ -67,7 +68,7 @@ function trussBeamExists(truss: Truss, p1: number, p2: number): boolean {
             return true;
         }
     }
-    for (const beam of truss.startBeams) {
+    for (const beam of truss.trainBeams) {
         if ((p1 === beam.p1 && p2 === beam.p2) || (p1 === beam.p2 && p2 === beam.p1)) {
             return true;
         }
@@ -76,64 +77,74 @@ function trussBeamExists(truss: Truss, p1: number, p2: number): boolean {
 }
 
 function trussEditPinsBegin(truss: Truss): number {
-    return truss.startPins.length;
+    return truss.trainPins.length;
 }
 
 function trussEditPinsEnd(truss: Truss): number {
-    return truss.startPins.length + truss.editPins.length;
+    return truss.trainPins.length + truss.editPins.length;
 }
 
 function trussUneditablePinsBegin(truss: Truss): number {
     return -truss.fixedPins.length;
 }
 
-function trussUneditablePinsEnd(truss: Truss): number {
-    return truss.startPins.length;
+function trussUneditablePinsEnd(_truss: Truss): number {
+    return 0;
 }
 
 function trussMovingPinsCount(truss: Truss): number {
-    return truss.startPins.length + truss.editPins.length;
+    return truss.trainPins.length + truss.editPins.length;
 }
 
-function trussGetClosestPin(truss: Truss, p: Point2D, maxd: number, beamStart?: number): number | undefined {
+function trussGetClosestPin(truss: Truss, p: Point2D, maxd: number, pinStart: number, maxLength: number): number | undefined {
     // TODO: acceleration structures. Probably only matters once we have 1000s of pins?
+    const pStart = trussGetPin(truss, pinStart);
     const block = new Set<number>();
     let res = undefined;
     let resd = maxd;
-    if (beamStart !== undefined) {
-        for (const b of truss.startBeams) {
-            if (b.p1 === beamStart) {
+    if (pinStart !== undefined) {
+        for (const b of truss.trainBeams) {
+            if (b.p1 === pinStart) {
                 block.add(b.p2);
-            } else if (b.p2 === beamStart) {
+            } else if (b.p2 === pinStart) {
                 block.add(b.p1);
             }
         }
         for (const b of truss.editBeams) {
-            if (b.p1 === beamStart) {
+            if (b.p1 === pinStart) {
                 block.add(b.p2);
-            } else if (b.p2 === beamStart) {
+            } else if (b.p2 === pinStart) {
                 block.add(b.p1);
             }
         }
     }
     for (let i = 0; i < truss.fixedPins.length; i++) {
+        if (block.has(i - truss.fixedPins.length) || pointDistance(pStart, truss.fixedPins[i]) > maxLength) {
+            continue;
+        }
         const d = pointDistance(p, truss.fixedPins[i]);
         if (d < resd) {
             res = i - truss.fixedPins.length;
             resd = d;
         }
     }
-    for (let i = 0; i < truss.startPins.length; i++) {
-        const d = pointDistance(p, truss.startPins[i]);
+    for (let i = 0; i < truss.trainPins.length; i++) {
+        if (block.has(i) || pointDistance(pStart, truss.trainPins[i]) > maxLength) {
+            continue;
+        }
+        const d = pointDistance(p, truss.trainPins[i]);
         if (d < resd) {
             res = i;
             resd = d;
         }
     }
     for (let i = 0; i < truss.editPins.length; i++) {
+        if (block.has(i + truss.trainPins.length) || pointDistance(pStart, truss.editPins[i]) > maxLength) {
+            continue;
+        }
         const d = pointDistance(p, truss.editPins[i]);
         if (d < resd) {
-            res = i + truss.startPins.length;
+            res = i + truss.trainPins.length;
             resd = d;
         }
     }
@@ -145,10 +156,10 @@ function trussGetPin(truss: Truss, pin: number): Point2D {
         throw new Error(`Unkown pin index ${pin}`);
     } else if (pin < 0) {
         return truss.fixedPins[truss.fixedPins.length + pin];
-    } else if (pin < truss.startPins.length) {
-        return truss.startPins[pin];
-    } else if (pin - truss.startPins.length < truss.editPins.length) {
-        return truss.editPins[pin - truss.startPins.length];
+    } else if (pin < truss.trainPins.length) {
+        return truss.trainPins[pin];
+    } else if (pin - truss.trainPins.length < truss.editPins.length) {
+        return truss.editPins[pin - truss.trainPins.length];
     } else {
         throw new Error(`Unkown pin index ${pin}`);
     }
@@ -241,7 +252,7 @@ class SceneSimulator {
         this.fixedPins = fixedPins;
 
         // Cache Beam values.
-        const beams: Array<SimulationBeam> = [...truss.startBeams, ...truss.editBeams].map(b => ({
+        const beams: Array<SimulationBeam> = [...truss.trainBeams, ...truss.editBeams].map(b => ({
             p1: b.p1,
             p2: b.p2,
             m: b.m,
@@ -733,7 +744,7 @@ export class SceneEditor {
     private doAddPin(a: AddPinAction, ec: ElementContext): void {
         const truss = this.scene.truss;
         const editIndex = truss.editPins.length;
-        const pin = truss.startPins.length + editIndex;
+        const pin = truss.trainPins.length + editIndex;
         truss.editPins.push(a.pin);
         for (const h of this.onAddPinHandlers) {
             h(editIndex, pin, ec);
@@ -750,7 +761,7 @@ export class SceneEditor {
             throw new Error('Pin does not match');
         }
         const editIndex = truss.editPins.length;
-        const pin = truss.startPins.length + editIndex;
+        const pin = truss.trainPins.length + editIndex;
         for (const h of this.onRemovePinHandlers) {
             h(editIndex, pin, ec);
         }
@@ -884,7 +895,7 @@ export class SceneEditor {
     ): void {
         const truss = this.scene.truss;
         trussAssertPin(truss, p2);
-        const p1 = truss.startPins.length + truss.editPins.length;
+        const p1 = truss.trainPins.length + truss.editPins.length;
         this.action({type: "composite", actions: [
             { type: "add_pin", pin},
             {
@@ -1352,11 +1363,19 @@ function createBeamPinOnDraw(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec:
 
 function createBeamPinOnPan(ps: Array<PanPoint>, ec: ElementContext, state: CreateBeamPinState) {
     const truss = state.edit.scene.truss;
-    const i = trussGetClosestPin(truss, ps[0].curr, 2, state.i);
-    state.drag = {
-        p: ps[0].curr,
-        i,
-    };
+    const maxLength = truss.materials[state.edit.editMaterial].maxLength;
+    const p0 = trussGetPin(truss, state.i);
+    let p = ps[0].curr;
+    const length = pointDistance(p0, p);
+    // Cap beam length at maximum length;
+    if (length > maxLength) {
+        // Barycentric coordinate of maximum length for material on line segment p -> p0.
+        const t = maxLength / length;
+        p[0] = p[0] * t + p0[0] * (1 - t);
+        p[1] = p[1] * t + p0[1] * (1 - t);
+    }
+    const i = trussGetClosestPin(truss, p, 2, state.i, maxLength);
+    state.drag = { p, i };
     ec.requestDraw();
 }
 
@@ -1449,7 +1468,7 @@ function drawBeam(ctx: CanvasRenderingContext2D, p1: Point2D, p2: Point2D, w: nu
 
 function TrussLayer(truss: Truss): LayoutTakesWidthAndHeight {
     return Fill(truss).onDraw((ctx: CanvasRenderingContext2D, _box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, truss: Truss) => {
-        for (const b of truss.startBeams) {
+        for (const b of truss.trainBeams) {
             drawBeam(ctx, trussGetPin(truss, b.p1), trussGetPin(truss, b.p2), b.w, truss.materials[b.m].style, b.deck);
         }
         for (const b of truss.editBeams) {
@@ -1471,7 +1490,7 @@ function SimulateLayer(edit: SceneEditor): LayoutTakesWidthAndHeight {
         const scene = edit.scene;
         const truss = scene.truss;
         const sim = edit.simulator();
-        for (const b of truss.startBeams) {
+        for (const b of truss.trainBeams) {
             drawBeam(ctx, sim.getPin(b.p1), sim.getPin(b.p2), b.w, truss.materials[b.m].style, b.deck);
         }
         for (const b of truss.editBeams) {
