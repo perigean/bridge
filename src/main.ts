@@ -1,13 +1,13 @@
 // Copyright Charles Dueck 2020
 
-
-import { SceneJSON, SceneElement } from "./scene.js";
+import { SceneElement } from "./scene.js";
+import { SceneJSON } from "./trussJSON.js";
 import { RootLayout, Border } from "./ui/node.js"
-//import { RootLayout, Fill, Border } from "./ui/node.js"
+
 
 const scene : SceneJSON = {
     truss: {
-        fixedPins: [[0, 64], [64, 64], [192, 64], [256, 64]],
+        fixedPins: [[0, 64], [100, 64], [156, 64], [256, 64]],
         trainPins: [[2, 62], [12, 62], [17, 62], [27, 62], [32, 62], [42, 62], [47, 62], [57, 62]],
         editPins: [],
         trainBeams: [
@@ -38,7 +38,9 @@ const scene : SceneJSON = {
                 style: "black",
                 density: 1200.0,
                 friction: 0.9,
-                maxLength: 32.0,
+                maxLength: 32.1,
+                tensionYield: 1.05,
+                buckleYield: 0.95,
             },
         ],
     },

@@ -1,6 +1,6 @@
 // Copyright Charles Dueck 2020
 
-import { ODEMethod, Derivative } from "./ode.js";
+import { Derivative, resizeFloat32Array, DynamicODEMethod } from "./ode.js";
 
 function addWithScale(x: Float32Array, s: number, y: Float32Array, out: Float32Array): Float32Array {
     const n = x.length;
@@ -15,7 +15,7 @@ export interface ODE {
     y: Float32Array;
 }
 
-export class RungeKutta4 implements ODEMethod {
+export class RungeKutta4 implements DynamicODEMethod<Float32Array> {
     t: number;
     y: Float32Array;
     private k1: Float32Array;
@@ -54,5 +54,30 @@ export class RungeKutta4 implements ODEMethod {
             y[i] += h * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]) / 6.0;
         }
         this.t += h;
+    }
+
+    save(): Float32Array {
+        return new Float32Array(this.y);
+    }
+
+    private resize(length: number): void {
+        this.y = resizeFloat32Array(this.y, length);
+        this.k1 = resizeFloat32Array(this.k1, length);
+        this.k2 = resizeFloat32Array(this.k2, length);
+        this.k3 = resizeFloat32Array(this.k3, length);
+        this.k4 = resizeFloat32Array(this.k4, length);
+        this.scratch = resizeFloat32Array(this.scratch, length);
+    }
+
+    restore(t: number, y: Float32Array): void {
+        this.t = t;
+        this.resize(y.length);
+        this.y.set(y);
+    }
+
+    add(...ys: number[]): void {
+        const length = this.y.length;
+        this.resize(length + ys.length);
+        this.y.set(ys, length);
     }
 };

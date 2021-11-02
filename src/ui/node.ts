@@ -523,11 +523,14 @@ export class RootLayout {
     canvas: HTMLCanvasElement;
     resize: ResizeObserver;
 
-    private touchTargets: Map<number, HasTouchHandlers<any> | TARGET_ROOT | TARGET_NONE>;
-    private touchTargetDetached: OnDetachHandler<any>;
-    private touchStart: (evt: TouchEvent) => void; 
-    private touchMove: (evt: TouchEvent) => void;
-    private touchEnd: (evt: TouchEvent) => void;
+    private pointerTargets: Map<number, HasTouchHandlers<any> | TARGET_ROOT | TARGET_NONE>;
+    private pointerTargetDetached: OnDetachHandler<any>;
+    private pointerDown: (evt: PointerEvent) => void; 
+    private debouncePointerMove: () => void;
+    private debouncePointerModeTargets: Map<HasTouchHandlers<any>, Array<TouchMove>>;
+    private debouncePointerMoveHandle: number | undefined;
+    private pointerMove: (evt: PointerEvent) => void;
+    private pointerEnd: (evt: PointerEvent) => void;
 
     constructor(canvas: HTMLCanvasElement, child: WPHPLayout<any, any>) {
         const ctx = canvas.getContext("2d", {alpha: false});
@@ -554,13 +557,13 @@ export class RootLayout {
         });
         this.resize.observe(canvas, {box: "device-pixel-content-box"});
 
-        this.touchTargets = new Map();
-        this.touchTargetDetached = (e: Element<any, any, any>) => {
+        this.pointerTargets = new Map();
+        this.pointerTargetDetached = (e: Element<any, any, any>) => {
             let foundTarget = false;
-            for (const [k, v] of this.touchTargets) {
+            for (const [k, v] of this.pointerTargets) {
                 if (v === e) {
-                    e.removeOnDetach(this.touchTargetDetached);
-                    this.touchTargets.set(k, TARGET_NONE);
+                    e.removeOnDetach(this.pointerTargetDetached);
+                    this.pointerTargets.set(k, TARGET_NONE);
                     foundTarget = true;
                 }
             }
@@ -568,96 +571,95 @@ export class RootLayout {
                 throw new Error("no active touch for detached element");
             }
         };
-        this.touchStart = (evt: TouchEvent) => {
-            let preventDefault = false;
-            for (const t of evt.touches) {
-                let target = this.touchTargets.get(t.identifier);
-                if (target !== undefined) {
-                    preventDefault = true;
-                    continue;
-                }
-                const p: Point2D = [t.clientX, t.clientY];
-                target = findTouchTarget(this.child, p);
-                if (target === undefined) {
-                    this.touchTargets.set(t.identifier, TARGET_ROOT);
-                    // Add placeholder to active targets map so we know anbout it.
-                    // Allow default action, so e.g. page can be scrolled.
-                } else {
-                    preventDefault = true;
-                    this.touchTargets.set(t.identifier, target);
-                    target.onDetach(this.touchTargetDetached);
-                    target.onTouchBeginHandler(t.identifier, p, this.ec, target.state);
-                }
+        this.pointerDown = (evt: PointerEvent) => {
+            if (evt.buttons === 0) {
+                return;
             }
-            if (preventDefault) {
-                // Some target was some for at least some of the touches. Don't let anything
-                // in HTML get this touch.
+            let target = this.pointerTargets.get(evt.pointerId);
+            if (target !== undefined) {
+                throw new Error('pointerDown target already set');
+            }
+            this.canvas.setPointerCapture(evt.pointerId);
+            const p: Point2D = [evt.clientX, evt.clientY];
+            target = findTouchTarget(this.child, p);
+            if (target === undefined) {
+                this.pointerTargets.set(evt.pointerId, TARGET_ROOT);
+                // Add placeholder to active targets map so we know anbout it.
+                // Allow default action, so e.g. page can be scrolled.
+            } else {
+                this.pointerTargets.set(evt.pointerId, target);
+                target.onDetach(this.pointerTargetDetached);
+                target.onTouchBeginHandler(evt.pointerId, p, this.ec, target.state);
                 evt.preventDefault();
             }
         };
-        this.touchMove = (evt: TouchEvent) => {
-            let preventDefault = false;
-            const targets = new Map<HasTouchHandlers<any>, Array<TouchMove>>();
-            for (const t of evt.touches) {
-                const target = this.touchTargets.get(t.identifier);
-                if (target === undefined) {
-                    throw new Error(`Touch move without start, id ${t.identifier}`);
-                } else if (target === TARGET_ROOT) {
-                    // Don't do anything, as the root element can't scroll.
-                } else if (target === TARGET_NONE) {
-                    // Don't do anything, target probably deleted.
-                } else {
-                    preventDefault = true;
-                    const ts = targets.get(target) || [];
-                    ts.push({
-                        id: t.identifier,
-                        p: [t.clientX, t.clientY],
-                    });
-                    targets.set(target, ts);
-                }
-            }
-            for (const [target, ts] of targets) {
+        this.debouncePointerMove = () => {
+            this.debouncePointerMoveHandle = undefined;
+            for (const [target, ts] of this.debouncePointerModeTargets) {
                 target.onTouchMoveHandler(ts, this.ec, target.state);
             }
-            if (preventDefault) {
-                evt.preventDefault();
-            }
+            this.debouncePointerModeTargets.clear();
         };
-        this.touchEnd = (evt: TouchEvent) => {
-            let preventDefault = false;
-            const removed = new Map(this.touchTargets);
-            for (const t of evt.touches) {
-                if (removed.delete(t.identifier) === false) {
-                    throw new Error(`Touch end without start, id ${t.identifier}`);
+        this.debouncePointerModeTargets = new Map();
+        this.debouncePointerMoveHandle = undefined;
+        this.pointerMove = (evt: PointerEvent) => {
+            if (evt.buttons === 0) {
+                return;
+            }
+            const target = this.pointerTargets.get(evt.pointerId);
+            if (target === undefined) {
+                //throw new Error(`Pointer move without start, id ${evt.pointerId}`);
+                return;
+            } else if (target === TARGET_ROOT) {
+                // Don't do anything, as the root element can't scroll.
+            } else if (target === TARGET_NONE) {
+                // Don't do anything, target probably deleted.
+            } else {
+                evt.preventDefault();
+                const ts = this.debouncePointerModeTargets.get(target) || [];
+                ts.push({
+                    id: evt.pointerId,
+                    p: [evt.clientX, evt.clientY],
+                });
+                this.debouncePointerModeTargets.set(target, ts);
+
+                if (this.debouncePointerMoveHandle === undefined) {
+                    this.debouncePointerMoveHandle = setTimeout(this.debouncePointerMove, 0);
                 }
             }
-            for (const [id, target] of removed) {
-                this.touchTargets.delete(id);
-                if (target !== TARGET_ROOT && target !== TARGET_NONE) {
-                    preventDefault = true;
-                    target.removeOnDetach(this.touchTargetDetached);
-                    target.onTouchEndHandler(id, this.ec, target.state);
-                }
+        };
+        this.pointerEnd = (evt: PointerEvent) => {
+            if (evt.buttons !== 0) {
+                return;
             }
-            if (preventDefault) {
+            const target = this.pointerTargets.get(evt.pointerId);
+            if (target === undefined) {
+                throw new Error(`Pointer end without start, id ${evt.pointerId}`);
+            }
+            this.pointerTargets.delete(evt.pointerId);
+            if (target !== TARGET_ROOT && target !== TARGET_NONE) {
+                this.debouncePointerModeTargets.delete(target);
                 evt.preventDefault();
+                target.removeOnDetach(this.pointerTargetDetached);
+                target.onTouchEndHandler(evt.pointerId, this.ec, target.state);
             }
         };
-        this.canvas.addEventListener("touchstart", this.touchStart, false);
-        this.canvas.addEventListener("touchmove", this.touchMove, false);
-        this.canvas.addEventListener("touchend", this.touchEnd, false);
-        this.canvas.addEventListener("touchcancel", this.touchEnd, false);
+        this.canvas.addEventListener("pointerdown", this.pointerDown, false);
+        this.canvas.addEventListener("pointermove", this.pointerMove, false);
+        this.canvas.addEventListener("pointerup", this.pointerEnd, false);
     }
 
     disconnect() {
         this.resize.disconnect();
         this.ec.disconnect();
         callDetachListeners(this.child);
-
-        this.canvas.removeEventListener("touchstart", this.touchStart, false);
-        this.canvas.removeEventListener("touchmove", this.touchMove, false);
-        this.canvas.removeEventListener("touchend", this.touchEnd, false);
-        this.canvas.removeEventListener("touchcancel", this.touchEnd, false);
+        this.debouncePointerModeTargets.clear();
+        if (this.debouncePointerMoveHandle !== undefined) {
+            clearTimeout(this.debouncePointerMoveHandle);
+        }
+        this.canvas.removeEventListener("pointerdown", this.pointerDown, false);
+        this.canvas.removeEventListener("pointermove", this.pointerMove, false);
+        this.canvas.removeEventListener("pointerup", this.pointerEnd, false);
     }
 };
 
