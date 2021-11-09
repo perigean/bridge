@@ -26,6 +26,16 @@ type ParameterlessHandler<State> = (ec: ElementContext, state: State) => void;
 export type OnDetachHandler<State> = (e: Element<any, any, State>, state: State) => void;
 export type OnDrawHandler<State> = (ctx: CanvasRenderingContext2D, box: LayoutBox, ec: ElementContext, vp: LayoutBox, state: State) => void;
 
+
+export type WheelPoint = {
+    readonly p: Point2D;
+    readonly deltaX: number;
+    readonly deltaY: number;
+    readonly deltaZ: number;
+    readonly deltaMode: number;
+};
+export type OnWheelHandler<State> = (s: WheelPoint, ec: ElementContext, state: State) => void;
+
 type OnTouchBeginHandler<State> = (id: number, p: Point2D, ec: ElementContext, state: State) => void;
 type TouchMove = {
     readonly id: number;
@@ -206,6 +216,15 @@ class Element<LayoutType extends string, Child extends ChildConstraint<string>, 
         return this;
     }
 
+    onWheelHandler?: OnWheelHandler<State>;
+    onWheel(handler: OnWheelHandler<State>): this {
+        if (this.onWheelHandler !== undefined) {
+            throw new Error('onWheel already set');
+        }
+        this.onWheelHandler = handler;
+        return this;
+    }
+
     onDetachHandler?: OnDetachHandler<State> | Array<OnDetachHandler<State>>;
     onDetach(handler: OnDetachHandler<State>): this {
         if (this.onDetachHandler === undefined || this.onDetachHandler === handler) {
@@ -359,6 +378,36 @@ function findTouchTarget(root: Element<any, any, any>, p: Point2D): undefined | 
         }
         if (e.onTouchBeginHandler !== undefined && e.onTouchMoveHandler !== undefined && e.onTouchEndHandler !== undefined) {
             return e as HasTouchHandlers<any>; // TODO: Why can't type inference figure this out?
+        }
+        if (e.child === undefined) {
+            // No children, so no more work to do.
+        } else if (e.child[Symbol.iterator]) {
+            // Push first child on first, so we visit last child last.
+            // The last child (the one on top) should override previous children's target.
+            stack.push(...e.child);
+        } else {
+            stack.push(e.child);
+        }
+    }
+    return undefined;
+}
+
+type HasWheelHandler<State> = {
+    onWheelHandler: OnWheelHandler<State>;
+} & Element<any, any, State>;
+
+function findWheelTarget(root: Element<any, any, any>, p: Point2D): undefined | HasWheelHandler<any> {
+    const stack = [root];
+    const x = p[0];
+    const y = p[1];
+    while (stack.length > 0) {
+        const e = stack.pop() as Element<any, any, any>;
+        if (x < e.left || x >= e.left + e.width || y < e.top || y >= e.top + e.height) {
+            // Outside e, skip.  
+            continue;
+        }
+        if (e.onWheelHandler !== undefined) {
+            return e as HasWheelHandler<any>;
         }
         if (e.child === undefined) {
             // No children, so no more work to do.
@@ -531,6 +580,7 @@ export class RootLayout {
     private debouncePointerMoveHandle: number | undefined;
     private pointerMove: (evt: PointerEvent) => void;
     private pointerEnd: (evt: PointerEvent) => void;
+    private wheel: (evt: WheelEvent) => void;
 
     constructor(canvas: HTMLCanvasElement, child: WPHPLayout<any, any>) {
         const ctx = canvas.getContext("2d", {alpha: false});
@@ -647,6 +697,23 @@ export class RootLayout {
         this.canvas.addEventListener("pointerdown", this.pointerDown, false);
         this.canvas.addEventListener("pointermove", this.pointerMove, false);
         this.canvas.addEventListener("pointerup", this.pointerEnd, false);
+
+        this.wheel = (evt: WheelEvent): void => {
+            const p: Point2D = [evt.clientX, evt.clientY];
+            const target = findWheelTarget(this.child, p);
+            if (target !== undefined) {
+                evt.preventDefault();
+                const s = {
+                    p,
+                    deltaX: evt.deltaX,
+                    deltaY: evt.deltaY,
+                    deltaZ: evt.deltaZ,
+                    deltaMode: evt.deltaMode,
+                };
+                target.onWheelHandler(s, this.ec, target.state);
+            }
+        };
+        this.canvas.addEventListener('wheel', this.wheel, false);
     }
 
     disconnect() {
@@ -660,6 +727,7 @@ export class RootLayout {
         this.canvas.removeEventListener("pointerdown", this.pointerDown, false);
         this.canvas.removeEventListener("pointermove", this.pointerMove, false);
         this.canvas.removeEventListener("pointerup", this.pointerEnd, false);
+        this.canvas.removeEventListener('wheel', this.wheel, false);
     }
 };
 
@@ -897,6 +965,31 @@ class ScrollLayout extends WPHPLayout<undefined, undefined> {
                 }
             }
         };
+        this.onWheelHandler = (s: WheelPoint, ec: ElementContext) => {
+            const target = findWheelTarget(this.scroller, s.p);
+            if (target === undefined) {
+                // Scroll the scroller.
+                const pc0 = this.p2c(s.p);
+                this.zoom *= 1 - s.deltaY * 0.001;
+                this.clampZoom();
+                const pc1 = this.p2c(s.p);
+                this.scroll[0] += pc0[0] - pc1[0];
+                this.scroll[1] += pc0[1] - pc1[1];
+                this.clampScroll();
+                ec.requestDraw();
+            } else {
+                // Forward the scroll event.
+                this.ec.parent = ec;
+                target.onWheelHandler({
+                    p: this.p2c(s.p),
+                    deltaX: s.deltaX * this.zoom,
+                    deltaY: s.deltaY * this.zoom,
+                    deltaZ: s.deltaZ * this.zoom,
+                    deltaMode: s.deltaMode,
+                }, this.ec, target.state);
+                this.ec.parent = undefined;
+            }
+        }
         // TODO: other handlers need forwarding.
     }
 
