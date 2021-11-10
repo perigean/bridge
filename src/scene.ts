@@ -838,7 +838,7 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
                 sceneUI,
             ),
             undefined,
-            16,
+            1,
         ),
         Bottom(
             Flex(64, 0,
