@@ -10,6 +10,7 @@ export class TrussSimPlayer {
     private keyInterval: number;                    // Time per keyframe.
     private keyframes: Map<number, TrussSimState>;   // Map of time to saved state.
     private playTimer: number | undefined;
+    private playSpeed: number;
     private playTime: number;
     private playTick: TimerHandler;
 
@@ -20,10 +21,11 @@ export class TrussSimPlayer {
         this.keyInterval = keyInterval;
         this.keyframes = new Map();
         this.playTimer = undefined;
+        this.playSpeed = 0;
         this.playTime = 0;
         this.playTick = (ms: number, ec: ElementContext) => {
             // Only compute up to 100ms of frames per tick, to allow other things to happen if we are behind.
-            let t1 = Math.min(this.playTime + ms * 0.001, this.sim.t + 0.1);
+            let t1 = Math.min(this.playTime + ms * 0.001 * this.playSpeed, this.sim.t + 0.1);
             while (this.sim.t < t1) {
                 this.next();
             }
@@ -54,15 +56,19 @@ export class TrussSimPlayer {
         }
     }
 
-    playing(): boolean {
-        return this.playTimer !== undefined;
+    speed(): number {
+        return this.playSpeed;
     }
 
-    play(ec: ElementContext) {
-        if (this.playTimer !== undefined) {
+    play(ec: ElementContext, speed: number) {
+        if (this.playSpeed === speed) {
             return;
         }
+        if (this.playTimer !== undefined) {
+            this.pause(ec);
+        }
         this.playTime = this.sim.t;
+        this.playSpeed = speed;
         this.playTimer = ec.timer(this.playTick, undefined);
     }
 
@@ -72,6 +78,7 @@ export class TrussSimPlayer {
         }
         ec.clearTimer(this.playTimer);
         this.playTimer = undefined;
+        this.playSpeed = 0;
     }
 
     seekTimes(): IterableIterator<number> {
@@ -85,8 +92,9 @@ export class TrussSimPlayer {
         }
         this.sim.restore(t, y);
         if (this.playTimer !== undefined) {
+            const speed = this.playSpeed;
             this.pause(ec);
-            this.play(ec);
+            this.play(ec, speed);
         }
     }
 };

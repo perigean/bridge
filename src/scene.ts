@@ -713,18 +713,56 @@ function drawPause(ctx: CanvasRenderingContext2D, box: LayoutBox) {
 function playButton(edit: SceneEditor) {
     return Flex(64, 0).onTap((_p: Point2D, ec: ElementContext) => {
         const player = edit.getPlayer();
-        if (player.playing()) {
+        if (player.speed() === 1) {
             player.pause(ec);
         } else {
-            player.play(ec);
+            player.play(ec, 1);
         }
         ec.requestDraw();
     }).onDraw((ctx: CanvasRenderingContext2D, box: LayoutBox) => {
         drawButtonBorder(ctx, box);
-        if (edit.getPlayer().playing()) {
+        if (edit.getPlayer().speed() === 1) {
             drawPause(ctx, box);
         } else {
             drawPlay(ctx, box);
+        }
+    });
+}
+
+function drawSlowMotion(ctx: CanvasRenderingContext2D, box: LayoutBox) {
+    const x = box.left + box.width * 0.5;
+    const y = box.top + box.height * 0.5;
+    const r = box.width * 0.333;
+    const px = Math.cos(Math.PI * 0.333) * r;
+    const py = Math.sin(Math.PI * 0.333) * r;
+    ctx.lineWidth = box.width * 0.1;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(x - px, y + py);
+    ctx.lineTo(x - px, y - py);
+    ctx.lineTo(x + r, y);
+    ctx.closePath();
+    ctx.moveTo(x - px * 1.8, y - py);
+    ctx.lineTo(x - px * 1.8, y + py);
+    ctx.stroke();
+}
+
+function slowmotionButton(edit: SceneEditor) {
+    return Flex(64, 0).onTap((_p: Point2D, ec: ElementContext) => {
+        const player = edit.getPlayer();
+        if (player.speed() === 0.1) {
+            player.pause(ec);
+        } else {
+            player.play(ec, 0.1);
+        }
+        ec.requestDraw();
+    }).onDraw((ctx: CanvasRenderingContext2D, box: LayoutBox) => {
+        drawButtonBorder(ctx, box);
+        if (edit.getPlayer().speed() === 0.1) {
+            drawPause(ctx, box);
+        } else {
+            drawSlowMotion(ctx, box);
         }
     });
 }
@@ -751,7 +789,7 @@ function drawReset(ctx: CanvasRenderingContext2D, box: LayoutBox) {
 function resetButton(edit: SceneEditor) {
     return Flex(64, 0).onTap((_p: Point2D, ec: ElementContext) => {
         const player = edit.getPlayer();
-        if (player.playing()) {
+        if (player.speed() !== 0) {
             player.pause(ec);
         }
         player.seek(0, ec);
@@ -790,7 +828,7 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
         1,
         Left(undoButton(edit), redoButton(edit), tabFiller()),
         Left(deckButton(edit), tabFiller()),
-        Left(resetButton(edit), playButton(edit), tabFiller()),
+        Left(resetButton(edit), slowmotionButton(edit), playButton(edit), tabFiller()),
     );
 
     return Layer(
