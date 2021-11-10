@@ -107,7 +107,7 @@ function pinTerrainCollision(t: Terrain, y: Float32Array, dydt: Float32Array) {
     for (let i = 0; i < length; i++) {
         const dx = particleGetDx(y, i);
         const dy = particleGetDy(y, i);
-        let bounceA = 1000.0; // Acceleration per metre of depth under terrain.
+        let bounceA = 10000.0; // Acceleration per metre of depth under terrain.
         let nx; // Terrain unit normal (direction of acceleration).
         let ny;
         if (dx < 0.0) {
@@ -223,7 +223,7 @@ function discDeckCollision(t: Terrain, beams: Array<Beam>, discs: Array<Disc>, f
                 const t2y = (1 - t2) * y1 + t2 * y2 - dy;
                 const ta = Math.abs(Math.atan2(t1y, t1x) - Math.atan2(t2y, t2x)) % Math.PI;
                 const area = 0.5 * r * r * ta - 0.5 * Math.abs(t1x * t2y - t1y * t2x);
-                const acc = 1000.0 * area / r;   // TODO: figure out the force.
+                const acc = 10000.0 * area / r;
                 let nx = cx - sx * t;
                 let ny = cy - sy * t;
                 const l = Math.sqrt(nx * nx + ny * ny);

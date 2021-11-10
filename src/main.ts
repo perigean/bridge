@@ -7,7 +7,7 @@ import { RootLayout, Border } from "./ui/node.js"
 
 const scene : SceneJSON = {
     truss: {
-        fixedPins: [[0, 64], [100, 64], [156, 64], [256, 64]],
+        fixedPins: [[96, 96], [160, 96], [0, 64], [64, 64], [192, 64], [256, 64]],
         trainPins: [[2, 62], [12, 62], [17, 62], [27, 62], [32, 62], [42, 62], [47, 62], [57, 62]],
         editPins: [],
         trainBeams: [
