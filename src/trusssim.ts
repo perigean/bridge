@@ -556,15 +556,15 @@ export class TrussSim {
                 const vy1 = this.getVy(p1);
                 const vx2 = this.getVx(p2);
                 const vy2 = this.getVy(p2);
-                // Buckling point is the midpoint displaced by a bit.
-                const displace = (beam.l - l) / beam.l;
-                const px = (x1 + x2) * 0.5 + dy * displace;
-                const py = (y1 + y2) * 0.5 - dx * displace;
+                // Buckling point is the midpoint.
+                const px = (x1 + x2) * 0.5;
+                const py = (y1 + y2) * 0.5;
                 const pl = Math.sqrt(Math.pow(px - x1, 2) + Math.pow(py - y1, 2));
                 const p = this.particleSim.add(
                     mass * 0.5,
                     px, py,
-                    (vx1 + vx2) * 0.5, (vy1 + vy2) * 0.5,   // TODO: add some multiple of (dy, -dx) * (beam.l - l)
+                    (vx1 + vx2) * 0.5 + dy, // Add in some speed perpendicular to beam direction.
+                    (vy1 + vy2) * 0.5 - dx,
                 );
                 if (p1 >= 0) {
                     this.particleSim.reset(p1, this.particleSim.getM(p1) - mass * -0.25, x1, y1, vx1, vy1);
