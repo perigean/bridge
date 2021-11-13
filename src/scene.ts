@@ -5,6 +5,7 @@ import { Point2D, pointDistance } from "./point.js";
 import { TrussSim } from "./trusssim.js";
 import { addChild, Bottom, Box, ElementContext, Fill, Flex, Layer, LayoutBox, LayoutTakesWidthAndHeight, Left, Mux, PanPoint, Position, PositionLayout, Relative, removeChild, Scroll, Switch } from "./ui/node.js";
 import { SceneJSON } from "./trussJSON.js";
+import { linearGradient, viridis } from "./colormap.js";
 
 export type Beam = {
     p1: number; // Index of pin at beginning of beam.
@@ -786,6 +787,38 @@ function drawReset(ctx: CanvasRenderingContext2D, box: LayoutBox) {
     ctx.stroke();
 }
 
+function colorMapButton(edit: SceneEditor) {
+    return Flex(64, 0).onTap((_p: Point2D, ec: ElementContext) => {
+        const sim = edit.getPlayer().sim;
+        if (sim.color === undefined) {
+            sim.color = viridis;
+        } else {
+            sim.color = undefined;
+        }
+        ec.requestDraw();
+    }).onDraw((ctx: CanvasRenderingContext2D, box: LayoutBox) => {
+        ctx.fillStyle = "white";
+        ctx.strokeStyle = "black";
+        drawButtonBorder(ctx, box);
+
+        const sim = edit.getPlayer().sim;
+        if (sim.color === undefined) {
+            ctx.strokeStyle = linearGradient(ctx, viridis, 10,
+                box.left + box.width * 0.2,
+                box.top + box.width * 0.2,
+                box.left + box.width * 0.8,
+                box.top + box.height * 0.8);
+        } else {
+            ctx.strokeStyle = "black";
+        }
+        ctx.lineWidth = box.width * 0.1;
+        ctx.beginPath();
+        ctx.moveTo(box.left + box.width * 0.2, box.top + box.width * 0.2);
+        ctx.lineTo(box.left + box.width * 0.8, box.top + box.height * 0.8);
+        ctx.stroke();
+    });
+}
+
 function resetButton(edit: SceneEditor) {
     return Flex(64, 0).onTap((_p: Point2D, ec: ElementContext) => {
         const player = edit.getPlayer();
@@ -828,7 +861,7 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
         1,
         Left(undoButton(edit), redoButton(edit), tabFiller()),
         Left(deckButton(edit), tabFiller()),
-        Left(resetButton(edit), slowmotionButton(edit), playButton(edit), tabFiller()),
+        Left(colorMapButton(edit), resetButton(edit), slowmotionButton(edit), playButton(edit), tabFiller()),
     );
 
     return Layer(
@@ -857,17 +890,14 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
         ),
     );
 
-    // TODO: single global damping force based on speed. Forget damping beams?
-
-    // TODO: scroll to zoom, mouse cursor counts as a tap. (use pointer events?)
-
-    // TODO: max beam length (from material. make it depend on width? Maybe just have a buckling force done properly and it takes care of itself...)
-
     // TODO: fix materials
+
+    // TODO: grid. just more objects in scene? (so undo works) Probably need to make a dynamic child ui node thing.
+
+    // TODO: train gets heavier and resets after it crosses the bridge. Have a score (partial points for the train making it across broken)
 
     // TODO: fix train simulation (make sure train can break apart, make only front disk turn, back disks have low friction?)
     // TODO: mode where if the whole train makes it across, the train teleports back to the beginning and gets heavier
-    // TODO: draw train
 
     // TODO: material selection. (might need text layout, which is a whole can of worms...)
 

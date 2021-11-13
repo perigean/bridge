@@ -1,5 +1,6 @@
 // Copyright 2021 Charles Dueck
 
+import { ColorMap } from "./colormap.js";
 import {
     applyAcceleration as particleApplyAcceleration,
     applyForce as particleApplyForce,
@@ -288,6 +289,21 @@ function beamStress(beams: Array<Beam>, fixed: Float32Array, y: Float32Array, m:
     }
 }
 
+function beamColor(b: Beam, x1: number, y1: number, x2: number, y2: number, color: ColorMap | undefined): string | CanvasGradient | CanvasPattern {
+    const m = b.m;
+    if (color === undefined || (b.p1 < 0 && b.p2 < 0)) {
+        // No ColorMap for tension/compression is defined, or beam is between fixed pins.
+        return m.style;
+    }
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const l = Math.sqrt(dx * dx + dy * dy);
+    const minl = b.l * m.buckleYield;
+    const maxl = b.l * m.tensionYield;
+    const x = (l - minl) / (maxl - minl);
+    return color(x);
+}
+
 export type TrussSimState = {
     particleState: Float32Array;
     beamState: Array<Beam>;
@@ -302,6 +318,7 @@ export class TrussSim {
     private beamsSaved: boolean;    // Has this.beams been returned from save()? If so, we'll need a new one if we mutate.
     private discs: Array<Disc>;
     private particleSim: ParticleSim;
+    color: ColorMap | undefined;
 
     constructor(scene: SceneJSON) {
         const pitch = scene.width / (scene.terrain.hmap.length - 1);
@@ -390,6 +407,7 @@ export class TrussSim {
                 beamStress(this.beams, this.fixedPins, y, m, dydt);
             },
         );
+        this.color = undefined;
     }
 
     get t(): number {
@@ -579,7 +597,6 @@ export class TrussSim {
     }
 
     draw(ctx: CanvasRenderingContext2D): void {
-        
         for (const b of this.beams) {
             const x1 = this.getDx(b.p1);
             const y1 = this.getDy(b.p1);
@@ -587,12 +604,13 @@ export class TrussSim {
             const y2 = this.getDy(b.p2);
             ctx.lineWidth = b.w;
             ctx.lineCap = "round";
-            ctx.strokeStyle = b.m.style;
+            ctx.strokeStyle = beamColor(b, x1, y1, x2, y2, this.color);
             ctx.beginPath();
             ctx.moveTo(x1, y1);
             ctx.lineTo(x2, y2);
             ctx.stroke();
-            if (b.deck) {
+            // Don't draw decks when we have a ColorMap.
+            if (b.deck && this.color === undefined) {
                 ctx.strokeStyle = "brown";  // TODO: deck style
                 ctx.lineWidth = b.w * 0.75;
                 ctx.beginPath();
