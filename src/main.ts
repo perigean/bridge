@@ -2,7 +2,7 @@
 
 import { SceneElement } from "./scene.js";
 import { SceneJSON } from "./trussJSON.js";
-import { RootLayout, Border } from "./ui/node.js"
+import { RootLayout } from "./ui/node.js"
 
 
 const scene : SceneJSON = {
@@ -59,9 +59,7 @@ const scene : SceneJSON = {
 const canvas = document.getElementById("canvas");
 new RootLayout(
     canvas as HTMLCanvasElement,
-    Border(16, "black",
-        SceneElement(scene),
-    )
+    SceneElement(scene),
 );
 
 // TODO: Test credentials.

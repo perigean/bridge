@@ -3,7 +3,7 @@
 import { TrussSimPlayer } from "./trusssimplayer.js";
 import { Point2D, pointDistance } from "./point.js";
 import { TrussSim } from "./trusssim.js";
-import { addChild, Bottom, Box, ElementContext, Fill, Flex, Layer, LayoutBox, LayoutTakesWidthAndHeight, Left, Mux, PanPoint, Position, PositionLayout, Relative, removeChild, Scroll, Switch } from "./ui/node.js";
+import { addChild, Bottom, Box, ElementContext, Fill, Flex, Layer, LayoutBox, LayoutTakesWidthAndHeight, Left, Mux, PanPoint, Position, PositionLayout, Relative, removeChild, Scroll, Tabs } from "./ui/node.js";
 import { SceneJSON } from "./trussJSON.js";
 import { linearGradient, viridis } from "./colormap.js";
 
@@ -594,13 +594,6 @@ function drawTerrain(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: Element
     ctx.fill();
 }
 
-function drawFill(style: string | CanvasGradient | CanvasPattern) {
-    return (ctx: CanvasRenderingContext2D, box: LayoutBox) => {
-        ctx.fillStyle = style;
-        ctx.fillRect(box.left, box.top, box.width, box.height);
-    }
-}
-
 function undoButtonTap(_p: Point2D, ec: ElementContext, edit: SceneEditor) {
     if (edit.undoCount() > 0) {
         edit.undo(ec);
@@ -842,6 +835,43 @@ function tabFiller() {
     });
 }
 
+function drawTab(ctx: CanvasRenderingContext2D, box: LayoutBox, active: boolean) {
+    ctx.fillStyle = active ? "white" : "lightgray";
+    ctx.fillRect(box.left, box.top, box.width, box.height);
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = active ? "black" : "darkgray";
+    ctx.beginPath();
+    ctx.moveTo(box.left + 1, box.top + box.height - 1);
+    ctx.lineTo(box.left + 1, box.top + 1);
+    ctx.lineTo(box.left + box.width - 1, box.top + 1);
+    ctx.lineTo(box.left + box.width - 1, box.top + box.height - 1);
+    ctx.stroke();
+}
+
+function drawUndoRedoTab(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, active: boolean) {
+    drawTab(ctx, box, active);
+    const innerBox: LayoutBox = {
+        left: box.left,
+        width: box.width * 0.7,
+        top: box.top,
+        height: box.height,
+    }
+    drawCircleWithArrow(ctx, innerBox, true);
+    innerBox.left = box.left + box.width * 0.3;
+    drawCircleWithArrow(ctx, innerBox, false);
+}
+
+function drawEditTab(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, active: boolean) {
+    drawTab(ctx, box, active);
+}
+
+function drawSimulateTab(ctx: CanvasRenderingContext2D, box: LayoutBox, _ec: ElementContext, _vp: LayoutBox, active: boolean) {
+    drawTab(ctx, box, active);
+    drawPlay(ctx, box);
+}
+
+
 export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
     const edit = new SceneEditor(sceneJSON);
 
@@ -851,17 +881,6 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
         ["truss", TrussLayer(sceneJSON.truss)],
         ["add_truss", AddTrussLayer(edit)],
         ["simulate", SimulateLayer(edit)],
-    );
-
-    const drawR = drawFill("red");
-    const drawG = drawFill("green");
-    const drawB = drawFill("blue");
-
-    const tools = Switch(
-        1,
-        Left(undoButton(edit), redoButton(edit), tabFiller()),
-        Left(deckButton(edit), tabFiller()),
-        Left(colorMapButton(edit), resetButton(edit), slowmotionButton(edit), playButton(edit), tabFiller()),
     );
 
     return Layer(
@@ -874,17 +893,24 @@ export function SceneElement(sceneJSON: SceneJSON): LayoutTakesWidthAndHeight {
             1,
         ),
         Bottom(
-            Flex(64, 0,
-                tools,  
-            ),
-            Flex(64, 0,
-                Left(
-                    Flex(64, 0).onDraw(drawR).onTap((_p: Point2D, ec: ElementContext) => { tools.set(0, ec); sceneUI.set(ec, "terrain", "truss"); edit.getPlayer().pause(ec) }),
-                    Flex(64, 0).onDraw(drawG).onTap((_p: Point2D, ec: ElementContext) => { tools.set(1, ec); sceneUI.set(ec, "terrain", "truss", "add_truss"); edit.getPlayer().pause(ec); }),
-                    Flex(64, 0).onDraw(drawB).onTap((_p: Point2D, ec: ElementContext) => {
-                        tools.set(2, ec);
-                        sceneUI.set(ec, "terrain", "simulate");
-                    }),
+            Flex(128, 0,
+                Tabs(64,
+                    [
+                        Flex(64, 0, false).onDraw(drawUndoRedoTab),
+                        Left(undoButton(edit), redoButton(edit), tabFiller()),
+                        (ec: ElementContext) => { sceneUI.set(ec, "terrain", "truss"); },
+                    ],
+                    [
+                        Flex(64, 0, true).onDraw(drawEditTab),
+                        Left(deckButton(edit), tabFiller()),
+                        (ec: ElementContext) => { sceneUI.set(ec, "terrain", "truss", "add_truss"); },
+                    ],
+                    [
+                        Flex(64, 0, false).onDraw(drawSimulateTab),
+                        Left(colorMapButton(edit), resetButton(edit), slowmotionButton(edit), playButton(edit), tabFiller()),
+                        (ec: ElementContext) => { sceneUI.set(ec, "terrain", "simulate"); },
+                        (ec: ElementContext) => { edit.getPlayer().pause(ec); },
+                    ],
                 ),
             ),
         ),

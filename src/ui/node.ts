@@ -1295,6 +1295,45 @@ export function Left<State>(first: State | FlexLayout<any, any>, ...children: Ar
     }
 }
 
+class TopFlexLayout<State> extends WPHPLayout<StaticArray<FlexLayout<any, any>>, State> {
+    constructor(state: State, children: StaticArray<FlexLayout<any, any>>) {
+        super(state, children);
+    }
+
+    layout(left: number, top: number, width: number, height: number): void {
+        this.left = left;
+        this.top = top;
+        this.width = width;
+        this.height = height;
+        let sumSize = 0;
+        let sumGrow = 0;
+        for (const c of this.child) {
+            sumSize += c.size;
+            sumGrow += c.grow;
+        }
+        let childTop = top;
+        let extra = height - sumSize;
+        for (const c of this.child) {
+            let childHeight = c.size;
+            if (c.grow !== 0) {
+                childHeight += extra * c.grow / sumGrow;
+            }
+            c.layout(left, childTop, width, childHeight);
+            childTop += childHeight;
+        }
+    }
+}
+
+export function Top(...children: Array<FlexLayout<any, any>>): TopFlexLayout<undefined>
+export function Top<State>(state: State, ...children: Array<FlexLayout<any, any>>): TopFlexLayout<State>;
+export function Top<State>(first: State | FlexLayout<any, any>, ...children: Array<FlexLayout<any, any>>): TopFlexLayout<any> {
+    if (first instanceof FlexLayout) {
+        return new TopFlexLayout(undefined, [first, ...children]);
+    } else {
+        return new TopFlexLayout(first, children);
+    }
+}
+
 class BottomFlexLayout<State> extends WPHPLayout<StaticArray<FlexLayout<any, any>>, State> {
     constructor(state: State, children: StaticArray<FlexLayout<any, any>>) {
         super(state, children);
@@ -1606,4 +1645,54 @@ export function Relative<State>(first: State | PositionLayout<any, any>, ...chil
         return new WPHPRelativeLayout<undefined>(undefined, [first, ...children]);
     }
     return new WPHPRelativeLayout<State>(first, children);
+}
+
+
+export type TabConfig = [FlexLayout<boolean, any>, WPHPLayout<any, any>, ((ec: ElementContext) => void)?, ((ec: ElementContext) => void)?];
+
+export function Tabs<Config extends TabConfig[]>(tabHeight: number, ...config: Config): WPHPLayout<any, undefined> {
+    let firstActive: number | undefined = undefined;
+    for (let i = 0; i < config.length; i++) {
+        if (firstActive === undefined) {
+            if (config[i][0].state === true) {
+                firstActive = i;
+            }
+        } else {
+            if (config[i][0].state === true) {
+                throw new Error(`More than one active tab found, ${firstActive} and ${i}`);
+            }
+        }
+    }
+    if (firstActive === undefined) {
+        throw new Error('No active tab found');
+    }
+    
+    const content = new SwitchLayout(firstActive, config.map(c => c[1]));
+    const tabs = config.map((t, i) => t[0].onTap((_p, ec) => {
+        const active = content.get();
+        tabs[active].state = false;
+        const onDeactivate = config[active][3];
+        if (onDeactivate !== undefined) {
+            onDeactivate(ec);
+        }
+        // TODO: make a custom map function/type to help out with the index type?
+        tabs[i].state = true;
+        content.set(i as Indices<Config>, ec);
+        const onActivate = config[i][2];
+        if (onActivate !== undefined) {
+            onActivate(ec);
+        }
+    }));
+    return Top(
+        Flex(
+            tabHeight,  // size
+            0,          // grow
+            Left(...tabs),
+        ),
+        Flex(
+            0,          // size
+            1,          // grow
+            content,
+        ),
+    );
 }
